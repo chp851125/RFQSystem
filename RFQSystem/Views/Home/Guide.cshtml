@@ -1,0 +1,86 @@
+@{
+    ViewData["Title"] = "功能說明";
+}
+<h3>詢比議價：企業常用功能說明</h3>
+<p class="text-muted">「詢比議價」是採購部門向多家供應商<strong>詢價</strong>、<strong>比價</strong>、再<strong>議價</strong>，最後<strong>決標</strong>並開立<strong>採購單</strong>的流程。目的是在價格、品質、交期之間取得最佳平衡，並留下可稽核的紀錄。</p>
+
+<div class="card p-3 mb-3">
+    <h5>一、標準流程</h5>
+    <div class="flow mb-2">
+        <span class="node">1. 請購需求</span><span class="arrow">→</span>
+        <span class="node">2. 建立詢價單</span><span class="arrow">→</span>
+        <span class="node">3. 邀請供應商</span><span class="arrow">→</span>
+        <span class="node">4. 供應商報價（密封）</span><span class="arrow">→</span>
+        <span class="node">5. 開標 / 比價</span><span class="arrow">→</span>
+        <span class="node">6. 議價（可多輪）</span><span class="arrow">→</span>
+        <span class="node">7. 決標 + 簽核</span><span class="arrow">→</span>
+        <span class="node">8. 轉採購單</span>
+    </div>
+    <div class="small text-muted">建議操作：到「詢價單」開啟 <a asp-controller="Rfq" asp-action="Details" asp-route-id="6">RFQ-xxxx-0006（草稿）</a>，依頁面上方的按鈕一步步完成整個流程。</div>
+</div>
+
+<div class="card p-3 mb-3">
+    <h5>二、本 Demo 已實作的功能</h5>
+    <table class="table table-sm">
+        <thead><tr><th style="width:18%">功能</th><th>說明</th><th style="width:28%">在哪裡看</th></tr></thead>
+        <tbody>
+            <tr><td>詢價單 (RFQ)</td><td>主旨、需求部門、報價截止日、交貨地點、詢價項目（料號、數量、需求日）。<strong>目標價</strong>為內部預算，不會給供應商看。</td><td>詢價單 → 新增</td></tr>
+            <tr><td>供應商主檔 / AVL</td><td>供應商分類、聯絡人、付款條件、品質分數、準交率、等級。只有<strong>合格供應商名單 (AVL)</strong> 內的廠商可以被邀請報價。</td><td>供應商</td></tr>
+            <tr><td>邀請供應商</td><td>依料件分類推薦供應商；少於 3 家會提醒「三家比價」內控規則。</td><td>詢價單明細 → 邀請供應商</td></tr>
+            <tr><td>供應商入口網站</td><td>供應商用自己的帳號登入，查看受邀的詢價、<strong>自行報價</strong>（截止前可修改、可婉拒）、<strong>回覆議價</strong>、查看決標結果、<strong>確認採購單</strong>。供應商看不到目標價與其他廠商的報價（密封報價）。</td><td>右上角「供應商入口網站」</td></tr>
+            <tr><td>密封報價 / 開標</td><td>密封期間只看得到「誰投標、何時投標」，價格連承辦採購都看不到，異動紀錄也不記金額。過了截止時間（或所有廠商都已回覆可<strong>提前開標</strong>）才能開標，開標需指定<strong>監標人</strong>見證，並產生<strong>開標紀錄</strong>（開標當下各廠報價快照）供稽核。也可選擇「公開報價」做對照。</td><td>詢價單明細 → 報價 → 密封投標箱；基本資料 → 開標紀錄</td></tr>
+            <tr><td>報價登錄</td><td>單價、交期（天）、MOQ 最小訂購量、付款條件、報價有效期。沒有使用入口網站的廠商（用 Email / 紙本回覆），由採購代為登錄，並標示報價來源。</td><td>詢價單明細 → 報價</td></tr>
+            <tr><td>階梯報價</td><td>供應商可依數量給不同單價（例：≥1,000 個 33 元、≥5,000 個 31.5 元，最多 4 階）。系統依本次需求數量自動套用單價，並檢查「量大價不可更高」。比價時會提示「再多買到某數量可降價」，並提供<strong>數量試算</strong>：不同數量下最便宜的廠商可能不同。議價後整組階梯會等比例調整。</td><td>報價表單「＋ 階梯報價」；比價分析 → 階梯價格試算</td></tr>
+            <tr><td>比價分析表</td><td>各供應商報價並排比較，標示每項最低價（綠）/最高價（紅），對照目標價與上次採購價。</td><td>詢價單明細 → 比價分析</td></tr>
+            <tr><td>加權評分</td><td>不只看價格：價格、交期、品質依權重計算總分（預設 60/20/20，可調整），排名推薦。</td><td>比價分析 → 加權評分</td></tr>
+            <tr><td>議價（多輪）</td><td>對特定供應商提出還價與說明，供應商回覆後產生新一輪報價；保留每一輪的價格變化。</td><td>詢價單明細 → 議價</td></tr>
+            <tr><td>決標 / 分批決標</td><td>每個項目可決標給不同供應商（Split Award）。<strong>未選最低價必須填寫理由</strong>。</td><td>詢價單明細 → 決標與簽核</td></tr>
+            <tr><td>簽核（授權金額）</td><td>依決標金額決定簽核層級：一律採購主管；≥ 50 萬加財務協理；≥ 200 萬加總經理。可核准或退回。</td><td>決標與簽核</td></tr>
+            <tr><td>合約價管理</td><td>決標後可把價格訂為<strong>合約價</strong>（有效期間、承諾採購量，沿用階梯價、交期、付款條件）。有效期間內<strong>依合約下單</strong>即可直接開採購單，不必重新詢價；系統追蹤承諾量使用率，超量會提醒。到期前 30 天列為「即將到期」並可一鍵<strong>發起續約詢價</strong>（自動帶入料件、數量、現行價為目標價、建議邀請名單）。新合約會自動取代同供應商同料件的舊合約；品質異常時可終止合約。新增詢價單時若料件已有合約，會提醒可直接下單。</td><td>選單「合約價」；詢價單 → 決標與簽核 → 建立合約價</td></tr>
+            <tr><td>轉採購單 (PO)</td><td>簽核完成後依得標供應商自動拆成多張採購單，並寫入歷史成交價。</td><td>採購單</td></tr>
+            <tr><td>歷史價格</td><td>每個料件的歷次成交價與供應商，作為下次議價的參考。</td><td>料件與歷史價</td></tr>
+            <tr><td>節省金額 (Cost Saving)</td><td>首次報價與最終決標價的差額，是採購績效常用 KPI。</td><td>儀表板、比價分析</td></tr>
+            <tr><td>稽核軌跡</td><td>每個動作誰做、何時做都被記錄，方便內部稽核。</td><td>詢價單明細 → 異動紀錄</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="card p-3 mb-3">
+    <h5>三、企業系統常見、但本 Demo 未實作的功能</h5>
+    <ul class="mb-0">
+        <li><strong>入口網站的正式帳號管理</strong>：帳號密碼、雙重驗證、同一家供應商多個使用者、報價單附件上傳。（Demo 只用選擇廠商的方式登入）</li>
+        <li><strong>多人電子簽章開標</strong>：開標需開標人與監標人各自登入、以憑證簽章確認後才解密。（Demo 只記錄監標人姓名）</li>
+        <li><strong>電子競標 / 反向拍賣 (Reverse Auction)</strong>：限時內供應商看到自己排名並可持續降價。</li>
+        <li><strong>附件管理</strong>：圖面、規格書、NDA、報價單 PDF。</li>
+        <li><strong>多幣別與匯率、稅別、運費條件 (Incoterms)</strong>。</li>
+        <li><strong>模具費 / NRE / 樣品費</strong>等一次性費用另計。</li>
+        <li><strong>合約價的價格調整條款</strong>：依原物料指數（如銅價、鋼價）或匯率自動調整合約價。</li>
+        <li><strong>請購單自動帶入合約價</strong>：請購時系統自動判斷有合約就直接轉採購單，沒有才進入詢價。</li>
+        <li><strong>請購單 (PR) 整合與 ERP 拋轉</strong>：從 ERP 請購單帶入詢價，採購單回拋 ERP。</li>
+        <li><strong>供應商評鑑</strong>：定期依品質、交期、服務評分，決定是否留在 AVL。</li>
+        <li><strong>權限與角色</strong>：採購、主管、財務、供應商看到的資料不同；利益迴避。</li>
+        <li><strong>Email / 系統通知</strong>：發出詢價、截止前提醒、簽核通知。</li>
+    </ul>
+</div>
+
+<div class="card p-3">
+    <h5>四、常見名詞</h5>
+    <div class="row small">
+        <div class="col-md-6">
+            <dl>
+                <dt>RFQ (Request for Quotation)</dt><dd>詢價單，規格明確時使用。</dd>
+                <dt>RFP (Request for Proposal)</dt><dd>需求建議書，規格不明確、需要供應商提方案時使用。</dd>
+                <dt>RFI (Request for Information)</dt><dd>資訊徵詢，初步了解市場與供應商。</dd>
+                <dt>AVL (Approved Vendor List)</dt><dd>合格供應商名單。</dd>
+            </dl>
+        </div>
+        <div class="col-md-6">
+            <dl>
+                <dt>MOQ (Minimum Order Quantity)</dt><dd>最小訂購量。</dd>
+                <dt>Lead Time</dt><dd>交期，下單到交貨所需天數。</dd>
+                <dt>目標價 / 底價</dt><dd>採購內部預期價格，用於判斷報價是否合理與議價。</dd>
+                <dt>Split Award</dt><dd>分批決標，不同項目或數量給不同供應商，分散風險。</dd>
+            </dl>
+        </div>
+    </div>
+</div>

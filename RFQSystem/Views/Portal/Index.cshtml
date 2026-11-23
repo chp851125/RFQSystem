@@ -1,0 +1,37 @@
+@model List<Rfq>
+@inject MockDb Db
+@{
+    ViewData["Title"] = "詢價邀請";
+    var me = (Supplier)ViewBag.Me;
+    var todo = Model.Count(r => Db.PortalStatus(r, me.Id).NeedAction);
+    var poTodo = Db.PurchaseOrders.Count(p => p.SupplierId == me.Id && p.Status == "已發出");
+}
+<h3>您好，@me.Name</h3>
+<div class="row g-3 mb-3">
+    <div class="col-6 col-md-3"><div class="card kpi p-3"><div class="label">待處理詢價 / 議價</div><div class="value text-danger">@todo</div></div></div>
+    <div class="col-6 col-md-3"><div class="card kpi p-3"><div class="label">待確認採購單</div><div class="value">@poTodo</div></div></div>
+    <div class="col-6 col-md-3"><div class="card kpi p-3"><div class="label">累計受邀</div><div class="value">@Model.Count</div></div></div>
+    <div class="col-6 col-md-3"><div class="card kpi p-3"><div class="label">得標次數</div><div class="value text-success">@Model.Count(r => Db.PortalStatus(r, me.Id).Text == "得標")</div></div></div>
+</div>
+
+<div class="card p-0">
+    <table class="table table-hover mb-0">
+        <thead class="table-light"><tr><th>詢價單號</th><th>主旨</th><th>採購聯絡人</th><th>報價截止</th><th>項目數</th><th>狀態</th></tr></thead>
+        <tbody>
+        @foreach (var r in Model)
+        {
+            var st = Db.PortalStatus(r, me.Id);
+            var left = (r.Deadline.Date - DateTime.Today).Days;
+            <tr class="@(st.NeedAction ? "table-warning" : "")">
+                <td><a asp-action="Rfq" asp-route-id="@r.Id">@r.No</a></td>
+                <td>@r.Title</td>
+                <td>@r.Buyer</td>
+                <td>@r.Deadline.ToString("yyyy/MM/dd") @if (r.Status == RfqStatus.Quoting && left >= 0) { <span class="badge bg-warning text-dark">剩 @left 天</span> }</td>
+                <td>@r.Lines.Count</td>
+                <td><span class="badge bg-@st.Badge">@st.Text</span></td>
+            </tr>
+        }
+        @if (Model.Count == 0) { <tr><td colspan="6" class="text-center text-muted py-4">目前沒有詢價邀請</td></tr> }
+        </tbody>
+    </table>
+</div>

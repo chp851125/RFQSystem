@@ -1,0 +1,65 @@
+﻿<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@ViewData["Title"] - 詢比議價系統</title>
+    <script type="importmap"></script>
+    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/RFQSystem.styles.css" asp-append-version="true" />
+</head>
+<body>
+    @{
+        var ctrl = ViewContext.RouteData.Values["controller"]?.ToString();
+        var act = ViewContext.RouteData.Values["action"]?.ToString();
+        string Active(string c, string? a = null) => c == ctrl && (a == null || a == act) ? "active" : "";
+    }
+    <header>
+        <nav class="navbar navbar-expand-lg navbar-dark app-nav mb-3">
+            <div class="container-fluid">
+                <a class="navbar-brand fw-bold" asp-controller="Home" asp-action="Index">詢比議價系統 <small class="fw-normal opacity-75">Demo</small></a>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target=".navbar-collapse" aria-label="切換選單">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <div class="navbar-collapse collapse">
+                    <ul class="navbar-nav me-auto">
+                        <li class="nav-item"><a class="nav-link @Active("Home", "Index")" asp-controller="Home" asp-action="Index">儀表板</a></li>
+                        <li class="nav-item"><a class="nav-link @Active("Rfq")" asp-controller="Rfq" asp-action="Index">詢價單</a></li>
+                        <li class="nav-item"><a class="nav-link @Active("Suppliers")" asp-controller="Suppliers" asp-action="Index">供應商</a></li>
+                        <li class="nav-item"><a class="nav-link @Active("Materials")" asp-controller="Materials" asp-action="Index">料件與歷史價</a></li>
+                        <li class="nav-item"><a class="nav-link @Active("Contracts")" asp-controller="Contracts" asp-action="Index">合約價</a></li>
+                        <li class="nav-item"><a class="nav-link @Active("PurchaseOrders")" asp-controller="PurchaseOrders" asp-action="Index">採購單</a></li>
+                        <li class="nav-item"><a class="nav-link @Active("Home", "Guide")" asp-controller="Home" asp-action="Guide">功能說明</a></li>
+                    </ul>
+                    <a class="btn btn-sm btn-warning me-3" asp-controller="Portal" asp-action="Login" target="_blank">供應商入口網站 ↗</a>
+                    <span class="navbar-text small">登入者：@RFQSystem.Services.MockDb.CurrentUser</span>
+                </div>
+            </div>
+        </nav>
+    </header>
+    <div class="container-xl">
+        <main role="main" class="pb-3">
+            @if (TempData["Msg"] is string msg)
+            {
+                <div class="alert alert-success alert-dismissible fade show">@msg<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+            }
+            @if (TempData["Error"] is string err)
+            {
+                <div class="alert alert-danger alert-dismissible fade show"><strong>無法執行：</strong>@err<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+            }
+            @RenderBody()
+        </main>
+    </div>
+
+    <footer class="border-top footer text-muted">
+        <div class="container-xl">
+            詢比議價系統 Demo（資料為記憶體內假資料，重新啟動網站即重置）
+        </div>
+    </footer>
+    <script src="~/lib/jquery/dist/jquery.min.js"></script>
+    <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="~/js/site.js" asp-append-version="true"></script>
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

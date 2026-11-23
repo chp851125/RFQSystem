@@ -1,0 +1,29 @@
+@model MockDb
+@{ ViewData["Title"] = "採購單"; }
+<h3>採購單</h3>
+<div class="help mb-3">採購單（PO）有兩種來源：<strong>詢價決標</strong>（簽核完成後依得標供應商自動產生，分批決標時會拆成多張）以及<strong>依合約下單</strong>（合約有效期間內直接以合約價開立，不需重新詢價）。實務上採購單通常會拋轉到 ERP 系統，後續進行交貨、驗收與付款。</div>
+<div class="card p-0">
+<table class="table table-hover mb-0">
+    <thead class="table-light"><tr><th>採購單號</th><th>供應商</th><th>來源</th><th>開立日期</th><th>付款條件</th><th class="num">金額（未稅）</th><th>狀態</th></tr></thead>
+    <tbody>
+    @foreach (var po in Model.PurchaseOrders.OrderByDescending(p => p.CreatedAt))
+    {
+        var r = Model.FindRfq(po.RfqId);
+        var ct = po.ContractId.HasValue ? Model.FindContract(po.ContractId.Value) : null;
+        <tr>
+            <td><a asp-action="Details" asp-route-id="@po.Id">@po.No</a></td>
+            <td>@Model.Supplier(po.SupplierId).Name</td>
+            <td>
+                @if (r != null) { <span class="badge bg-light text-dark border">詢價</span> <a asp-controller="Rfq" asp-action="Details" asp-route-id="@r.Id" asp-route-tab="award">@r.No</a> }
+                @if (ct != null) { <span class="badge bg-success">合約</span> <a asp-controller="Contracts" asp-action="Details" asp-route-id="@ct.Id">@ct.No</a> }
+            </td>
+            <td>@po.CreatedAt.ToString("yyyy/MM/dd")</td>
+            <td>@po.PaymentTerms</td>
+            <td class="num">@po.Total.ToString("N0")</td>
+            <td><span class="badge bg-@(po.Status == "已發出" ? "primary" : "success")">@po.Status</span></td>
+        </tr>
+    }
+    @if (Model.PurchaseOrders.Count == 0) { <tr><td colspan="7" class="text-center text-muted py-4">尚無採購單</td></tr> }
+    </tbody>
+</table>
+</div>

@@ -1,0 +1,31 @@
+@model List<PriceContract>
+@{
+    ViewData["Title"] = "我的合約";
+    var db = (MockDb)ViewBag.Db;
+}
+<h3>我的合約</h3>
+<div class="help mb-3">以下是貴司與本公司簽訂的合約價。合約有效期間內，本公司會直接依合約價下單（不再另行詢價），請依約定價格與交期供貨。合約到期前，採購會另行發出續約詢價。</div>
+<div class="card p-0">
+    <div class="table-responsive">
+    <table class="table mb-0">
+        <thead class="table-light"><tr><th>合約編號</th><th>料件</th><th class="num">合約單價</th><th>有效期間</th><th>狀態</th><th class="num">承諾量</th><th class="num">已下單量</th><th>交期 / 付款</th></tr></thead>
+        <tbody>
+        @foreach (var c in Model)
+        {
+            var m = db.Material(c.MaterialId);
+            <tr>
+                <td>@c.No</td>
+                <td>@m.PartNo @m.Name<div class="small text-muted">@m.Spec</div></td>
+                <td class="num">@c.UnitPrice.ToString("N2")@if (c.Tiers.Count > 0) { <div class="small text-primary">@c.TierText</div> }</td>
+                <td class="small">@c.ValidFrom.ToString("yyyy/MM/dd") ~ @c.ValidTo.ToString("yyyy/MM/dd")</td>
+                <td><span class="badge bg-@c.StatusBadge">@c.Status</span>@if (c.Terminated) { <div class="small text-muted">@c.TerminateReason</div> }</td>
+                <td class="num">@(c.CommittedQty > 0 ? c.CommittedQty.ToString("N0") : "-")</td>
+                <td class="num">@db.ContractUsed(c).ToString("N0")</td>
+                <td class="small">@c.LeadTimeDays 天 / @c.PaymentTerms</td>
+            </tr>
+        }
+        @if (Model.Count == 0) { <tr><td colspan="8" class="text-center text-muted py-4">目前沒有合約</td></tr> }
+        </tbody>
+    </table>
+    </div>
+</div>

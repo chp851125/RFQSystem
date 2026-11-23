@@ -1,0 +1,110 @@
+﻿@model MockDb
+@{
+    ViewData["Title"] = "儀表板";
+    var active = Model.Rfqs.Where(r => r.Status is RfqStatus.Quoting or RfqStatus.Comparing or RfqStatus.Negotiating).ToList();
+    var pending = Model.Rfqs.Where(r => r.Status == RfqStatus.PendingApproval).ToList();
+    var done = Model.Rfqs.Where(r => r.Status is RfqStatus.Awarded or RfqStatus.PoCreated or RfqStatus.PendingApproval && r.Awards.Count > 0).ToList();
+    var savings = done.Sum(MockDb.NegotiationSavings);
+    var awardTotal = done.Sum(r => r.AwardTotal);
+    var avgQuotes = Model.Rfqs.Where(r => r.Quotes.Count > 0).Select(r => r.Quotes.Select(q => q.SupplierId).Distinct().Count()).DefaultIfEmpty(0).Average();
+}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h3 class="mb-0">採購儀表板</h3>
+    <div class="d-flex gap-2">
+        <form asp-action="Reset" method="post" onsubmit="return confirm('確定要把所有示範資料重置回初始狀態嗎？您做過的操作都會清除。');">
+            <button class="btn btn-outline-secondary">重置示範資料</button>
+        </form>
+        <a class="btn btn-primary" asp-controller="Rfq" asp-action="Create">＋ 新增詢價單</a>
+    </div>
+</div>
+
+<div class="row g-3 mb-3">
+    <div class="col-6 col-md-3"><div class="card kpi p-3"><div class="label">進行中詢價單</div><div class="value">@active.Count</div><div class="small text-muted">詢價 / 比價 / 議價</div></div></div>
+    <div class="col-6 col-md-3"><div class="card kpi p-3"><div class="label">待簽核決標</div><div class="value text-danger">@pending.Count</div><div class="small text-muted">需主管核准</div></div></div>
+    <div class="col-6 col-md-3"><div class="card kpi p-3"><div class="label">決標總金額</div><div class="value">@awardTotal.ToString("N0")</div><div class="small text-muted">TWD</div></div></div>
+    <div class="col-6 col-md-3"><div class="card kpi p-3"><div class="label">議價節省金額</div><div class="value text-success">@savings.ToString("N0")</div><div class="small text-muted">首次報價 − 最終決標價；節省率 @((awardTotal + savings) == 0 ? "0" : (savings / (awardTotal + savings) * 100).ToString("0.0"))%</div></div></div>
+</div>
+
+<div class="card p-3 mb-3">
+    <h6 class="mb-2">標準作業流程（點各階段可看該狀態的詢價單）</h6>
+    <div class="flow">
+        @{
+            var steps = new[] { RfqStatus.Draft, RfqStatus.Quoting, RfqStatus.Comparing, RfqStatus.Negotiating, RfqStatus.PendingApproval, RfqStatus.Awarded, RfqStatus.PoCreated };
+        }
+        @for (var i = 0; i < steps.Length; i++)
+        {
+            var s = steps[i];
+            <a class="node text-decoration-none text-dark" asp-controller="Rfq" asp-action="Index" asp-route-status="@s">
+                @s.Text() <span class="badge bg-@s.Badge()">@Model.Rfqs.Count(r => r.Status == s)</span>
+            </a>
+            if (i < steps.Length - 1) { <span class="arrow">→</span> }
+        }
+    </div>
+    <div class="small text-muted mt-2">平均每張詢價單取得 @avgQuotes.ToString("0.0") 家報價（內控常見要求：至少 @MockDb.MinSuppliersForCompare 家比價）</div>
+</div>
+
+<div class="row g-3">
+    <div class="col-lg-7">
+        <div class="card p-3 h-100">
+            <h6>進行中的詢價單</h6>
+            <table class="table table-sm table-hover mb-0">
+                <thead><tr><th>單號</th><th>主旨</th><th>狀態</th><th class="num">已報價</th><th>截止日</th></tr></thead>
+                <tbody>
+                @foreach (var r in active.OrderBy(r => r.Deadline))
+                {
+                    var left = (r.Deadline.Date - DateTime.Today).Days;
+                    <tr>
+                        <td><a asp-controller="Rfq" asp-action="Details" asp-route-id="@r.Id">@r.No</a></td>
+                        <td>@r.Title</td>
+                        <td>
+                            <span class="badge bg-@r.Status.Badge()">@r.Status.Text()</span>
+                            @if (r.IsSealed && r.Status == RfqStatus.Quoting) { <span class="badge bg-dark">@(Model.CanOpen(r).Ok ? "可開標" : "密封")</span> }
+                        </td>
+                        <td class="num">@r.Quotes.Select(q => q.SupplierId).Distinct().Count() / @r.InvitedSupplierIds.Count</td>
+                        <td>@r.Deadline.ToString("MM/dd") @if (r.Status == RfqStatus.Quoting && left >= 0) { <span class="badge bg-warning text-dark">剩 @left 天</span> }</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="card p-3 mb-3">
+            <h6>待簽核</h6>
+            @if (pending.Count == 0) { <div class="text-muted small">目前沒有待簽核項目</div> }
+            @foreach (var r in pending)
+            {
+                var step = r.Approvals.FirstOrDefault(a => a.Status == "Pending");
+                <div class="d-flex justify-content-between border-bottom py-1">
+                    <a asp-controller="Rfq" asp-action="Details" asp-route-id="@r.Id" asp-route-tab="award">@r.No @r.Title</a>
+                    <span class="small">@r.AwardTotal.ToString("N0") ・ 等待 @step?.Role</span>
+                </div>
+            }
+        </div>
+        @{
+            var expiring = Model.Contracts.Where(c => c.Status == "即將到期").OrderBy(c => c.ValidTo).ToList();
+        }
+        <div class="card p-3 mb-3">
+            <h6>即將到期合約 <span class="small text-muted fw-normal">（@PriceContract.ExpiringDays 天內）</span></h6>
+            @if (expiring.Count == 0) { <div class="text-muted small">沒有即將到期的合約</div> }
+            @foreach (var c in expiring)
+            {
+                <div class="d-flex justify-content-between border-bottom py-1">
+                    <a asp-controller="Contracts" asp-action="Details" asp-route-id="@c.Id">@c.No @Model.Material(c.MaterialId).Name</a>
+                    <span class="small">@Model.Supplier(c.SupplierId).Name ・ <span class="text-danger">剩 @c.DaysLeft 天</span></span>
+                </div>
+            }
+        </div>
+        <div class="card p-3">
+            <h6>最近採購單</h6>
+            @foreach (var po in Model.PurchaseOrders.OrderByDescending(p => p.CreatedAt).Take(5))
+            {
+                <div class="d-flex justify-content-between border-bottom py-1">
+                    <a asp-controller="PurchaseOrders" asp-action="Details" asp-route-id="@po.Id">@po.No</a>
+                    <span class="small">@Model.Supplier(po.SupplierId).Name ・ @po.Total.ToString("N0")</span>
+                </div>
+            }
+        </div>
+    </div>
+</div>

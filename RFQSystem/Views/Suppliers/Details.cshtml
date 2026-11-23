@@ -1,0 +1,51 @@
+@model MockDb
+@{
+    var s = Model.Supplier((int)ViewBag.Id);
+    ViewData["Title"] = s.Name;
+    var rfqs = Model.Rfqs.Where(r => r.InvitedSupplierIds.Contains(s.Id)).OrderByDescending(r => r.Id).ToList();
+    var sent = rfqs.Where(r => r.Status != RfqStatus.Draft).ToList();
+    var quoted = sent.Count(r => MockDb.LatestQuote(r, s.Id) != null);
+    var won = rfqs.Count(r => r.Awards.Any(a => a.SupplierId == s.Id));
+}
+<a asp-action="Index" class="small">← 供應商列表</a>
+<h3>@s.Code @s.Name <span class="badge bg-secondary">等級 @s.Grade</span></h3>
+<div class="row g-3 mb-3">
+    <div class="col-md-6"><div class="card p-3 h-100">
+        <dl class="row mb-0 small">
+            <dt class="col-4">聯絡人</dt><dd class="col-8">@s.Contact</dd>
+            <dt class="col-4">電話</dt><dd class="col-8">@s.Phone</dd>
+            <dt class="col-4">Email</dt><dd class="col-8">@s.Email</dd>
+            <dt class="col-4">供應分類</dt><dd class="col-8">@string.Join("、", s.Categories)</dd>
+            <dt class="col-4">付款條件</dt><dd class="col-8">@s.PaymentTerms</dd>
+            <dt class="col-4">AVL</dt><dd class="col-8">@(s.IsQualified ? "合格供應商" : "待評鑑（不可邀請報價）")</dd>
+        </dl>
+    </div></div>
+    <div class="col-md-6"><div class="row g-2">
+        <div class="col-6"><div class="card kpi p-3"><div class="label">品質分數</div><div class="value">@s.QualityScore</div></div></div>
+        <div class="col-6"><div class="card kpi p-3"><div class="label">準時交貨率</div><div class="value">@s.OnTimeRate%</div></div></div>
+        <div class="col-6"><div class="card kpi p-3"><div class="label">報價回覆率</div><div class="value">@(sent.Count == 0 ? "-" : (quoted * 100 / sent.Count) + "%")</div></div></div>
+        <div class="col-6"><div class="card kpi p-3"><div class="label">得標率</div><div class="value">@(quoted == 0 ? "-" : (won * 100 / quoted) + "%")</div></div></div>
+    </div></div>
+</div>
+<div class="card p-3">
+    <h6>參與的詢價</h6>
+    <table class="table table-sm mb-0">
+        <thead class="table-light"><tr><th>單號</th><th>主旨</th><th>狀態</th><th>報價輪次</th><th class="num">最新報價總額</th><th>結果</th></tr></thead>
+        <tbody>
+        @foreach (var r in rfqs)
+        {
+            var q = MockDb.LatestQuote(r, s.Id);
+            var total = q?.Lines.Sum(l => l.UnitPrice * r.Lines.First(x => x.Id == l.RfqLineId).Qty);
+            var wonLines = r.Awards.Count(a => a.SupplierId == s.Id);
+            <tr>
+                <td><a asp-controller="Rfq" asp-action="Details" asp-route-id="@r.Id">@r.No</a></td>
+                <td>@r.Title</td>
+                <td><span class="badge bg-@r.Status.Badge()">@r.Status.Text()</span></td>
+                <td>@(q == null ? "未報價" : $"第 {q.Round} 輪")</td>
+                <td class="num">@(r.IsSealed && q != null ? "密封中" : total?.ToString("N0"))</td>
+                <td>@if (wonLines > 0) { <span class="badge bg-success">得標 @wonLines 項</span> } else if (r.Awards.Count > 0) { <span class="text-muted">未得標</span> }</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>

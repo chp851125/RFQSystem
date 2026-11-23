@@ -1,0 +1,28 @@
+@model MockDb
+@{ ViewData["Title"] = "供應商"; }
+<h3>供應商主檔</h3>
+<div class="help mb-3">供應商等級依「品質分數 × 60% + 準時交貨率 × 40%」計算：A ≥ 90、B ≥ 80、C ≥ 70。只有列入<strong>合格供應商名單（AVL）</strong>的廠商能被邀請報價，新廠商通常需經過評鑑（工廠稽核、樣品驗證）才能加入。</div>
+<div class="card p-0">
+<table class="table table-hover mb-0">
+    <thead class="table-light"><tr><th>代碼</th><th>名稱</th><th>分類</th><th>聯絡人</th><th>付款條件</th><th class="num">品質</th><th class="num">準交率</th><th>等級</th><th>AVL</th><th class="num">受邀 / 得標</th></tr></thead>
+    <tbody>
+    @foreach (var s in Model.Suppliers)
+    {
+        var invited = Model.Rfqs.Count(r => r.InvitedSupplierIds.Contains(s.Id));
+        var won = Model.Rfqs.Count(r => r.Awards.Any(a => a.SupplierId == s.Id));
+        <tr>
+            <td>@s.Code</td>
+            <td><a asp-action="Details" asp-route-id="@s.Id">@s.Name</a></td>
+            <td>@string.Join("、", s.Categories)</td>
+            <td>@s.Contact</td>
+            <td>@s.PaymentTerms</td>
+            <td class="num">@s.QualityScore</td>
+            <td class="num">@s.OnTimeRate%</td>
+            <td><span class="badge bg-secondary">@s.Grade</span></td>
+            <td>@if (s.IsQualified) { <span class="badge bg-success">合格</span> } else { <span class="badge bg-danger">待評鑑</span> }</td>
+            <td class="num">@invited / @won</td>
+        </tr>
+    }
+    </tbody>
+</table>
+</div>

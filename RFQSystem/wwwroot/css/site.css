@@ -1,0 +1,56 @@
+html {
+  font-size: 14px;
+}
+
+@media (min-width: 768px) {
+  html {
+    font-size: 16px;
+  }
+}
+
+.btn:focus, .btn:active:focus, .btn-link.nav-link:focus, .form-control:focus, .form-check-input:focus {
+  box-shadow: 0 0 0 0.1rem white, 0 0 0 0.25rem #258cfb;
+}
+
+html {
+  position: relative;
+  min-height: 100%;
+}
+
+body {
+  margin-bottom: 60px;
+}
+
+.form-floating > .form-control-plaintext::placeholder, .form-floating > .form-control::placeholder {
+  color: var(--bs-secondary-color);
+  text-align: end;
+}
+
+.form-floating > .form-control-plaintext:focus::placeholder, .form-floating > .form-control:focus::placeholder {
+  text-align: start;
+}
+/* ---- 詢比議價系統 ---- */
+body { background: #f4f6f9; }
+.app-nav { background: #1f3a5f; }
+.app-nav .nav-link.active { font-weight: 600; border-bottom: 2px solid #ffc107; }
+.card { border: none; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.kpi .value { font-size: 1.8rem; font-weight: 700; }
+.kpi .label { color: #6c757d; font-size: .85rem; }
+.table td, .table th { vertical-align: middle; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.cell-best { background: #d1f2df !important; font-weight: 600; }
+.cell-worst { background: #fde2e1 !important; }
+.stepper { display: flex; gap: 0; flex-wrap: wrap; }
+.stepper .step { flex: 1; min-width: 90px; text-align: center; padding: .5rem .25rem; font-size: .85rem; background: #e9ecef; color: #6c757d; position: relative; }
+.stepper .step + .step { border-left: 2px solid #fff; }
+.stepper .step.done { background: #cfe2ff; color: #084298; }
+.stepper .step.current { background: #0d6efd; color: #fff; font-weight: 600; }
+.help { background: #fff8e1; border-left: 4px solid #ffc107; padding: .6rem .9rem; font-size: .88rem; border-radius: 4px; }
+.bar { height: 10px; background: #0d6efd; border-radius: 3px; }
+.flow { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+.flow .node { background: #fff; border: 1px solid #ced4da; border-radius: 6px; padding: .4rem .7rem; font-size: .9rem; }
+.flow .arrow { color: #adb5bd; }
+@media print { .app-nav, .footer, .no-print { display: none !important; } body { background: #fff; } }
+.portal { background: #f3f7f4; }
+.portal-nav { background: #1d5c4a; }
+.portal-nav .nav-link.active { font-weight: 600; border-bottom: 2px solid #ffc107; }

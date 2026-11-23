@@ -1,0 +1,35 @@
+@model MockDb
+@{ ViewData["Title"] = "料件與歷史價"; }
+<h3>料件與歷史價格</h3>
+<div class="help mb-3">歷史成交價是判斷報價合理性與議價的依據。每次轉採購單（包含依合約下單）時，系統會自動把成交價寫入歷史紀錄。有生效中合約價的料件，可直接依合約下單，不必重新詢價。</div>
+<div class="card p-0">
+<table class="table table-hover mb-0">
+    <thead class="table-light"><tr><th>料號</th><th>品名</th><th>規格</th><th>單位</th><th>分類</th><th class="num">最近成交價</th><th class="num">12 個月最低 / 最高</th><th>最近成交日</th><th>生效中合約價</th></tr></thead>
+    <tbody>
+    @foreach (var m in Model.Materials)
+    {
+        var h = Model.PriceHistories.Where(x => x.MaterialId == m.Id).OrderByDescending(x => x.Date).ToList();
+        var last = h.FirstOrDefault();
+        var yr = h.Where(x => x.Date >= DateTime.Today.AddYears(-1)).ToList();
+        <tr>
+            <td><a asp-action="Details" asp-route-id="@m.Id">@m.PartNo</a></td>
+            <td>@m.Name</td>
+            <td class="small">@m.Spec</td>
+            <td>@m.Unit</td>
+            <td>@m.Category</td>
+            <td class="num">@last?.UnitPrice.ToString("N2")</td>
+            <td class="num">@(yr.Count > 0 ? $"{yr.Min(x => x.UnitPrice):N2} / {yr.Max(x => x.UnitPrice):N2}" : "-")</td>
+            <td>@last?.Date.ToString("yyyy/MM/dd")</td>
+            <td class="small">
+                @foreach (var c in Model.ActiveContracts(m.Id))
+                {
+                    <div><a asp-controller="Contracts" asp-action="Details" asp-route-id="@c.Id">@c.UnitPrice.ToString("N2")</a> @Model.Supplier(c.SupplierId).Name
+                        @if (c.Status == "即將到期") { <span class="badge bg-warning text-dark">剩 @c.DaysLeft 天</span> }</div>
+                }
+                @if (!Model.ActiveContracts(m.Id).Any()) { <span class="text-muted">無</span> }
+            </td>
+        </tr>
+    }
+    </tbody>
+</table>
+</div>

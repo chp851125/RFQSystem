@@ -1,0 +1,163 @@
+@model PriceContract
+@{
+    var c = Model;
+    var db = (MockDb)ViewBag.Db;
+    var m = db.Material(c.MaterialId);
+    var s = db.Supplier(c.SupplierId);
+    ViewData["Title"] = c.No;
+    var used = db.ContractUsed(c);
+    var spend = db.ContractSpend(c);
+    var pos = db.PurchaseOrders.Where(p => p.ContractId == c.Id).OrderByDescending(p => p.CreatedAt).ToList();
+    var others = db.ActiveContracts(c.MaterialId).Where(x => x.Id != c.Id).ToList();
+    var renewals = db.Rfqs.Where(r => r.Logs.Any(l => l.Action.Contains($"由合約 {c.No} 發起續約詢價"))).ToList();
+    var renewedFrom = c.RenewedFromId.HasValue ? db.FindContract(c.RenewedFromId.Value) : null;
+    var replacedBy = db.Contracts.FirstOrDefault(x => x.RenewedFromId == c.Id);
+    var pct = c.CommittedQty > 0 ? (int)Math.Min(100, used / c.CommittedQty * 100) : 0;
+    var tiersJson = System.Text.Json.JsonSerializer.Serialize(c.Tiers.Select(t => new { q = t.MinQty, p = t.UnitPrice }));
+}
+<a asp-action="Index" class="small">← 合約列表</a>
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+    <div>
+        <h3 class="mb-0">@c.No　@m.Name <span class="badge bg-@c.StatusBadge fs-6 align-middle">@c.Status</span></h3>
+        <div class="text-muted small">@m.PartNo @m.Spec ・ 供應商 <a asp-controller="Suppliers" asp-action="Details" asp-route-id="@s.Id">@s.Name</a></div>
+    </div>
+    <div class="d-flex gap-2">
+        @if (!c.Terminated && c.Status is "即將到期" or "已到期" or "生效中" && renewals.Count == 0)
+        {
+            <form asp-action="Renew" asp-route-id="@c.Id" method="post"><button class="btn @(c.Status == "生效中" ? "btn-outline-primary" : "btn-warning")">發起續約詢價</button></form>
+        }
+        @if (c.IsActive)
+        {
+            <form asp-action="Terminate" asp-route-id="@c.Id" method="post" onsubmit="var x = prompt('請輸入終止原因'); if (!x) return false; this.reason.value = x;">
+                <input type="hidden" name="reason" /><button class="btn btn-outline-danger">終止合約</button>
+            </form>
+        }
+    </div>
+</div>
+
+@if (c.Status == "即將到期")
+{
+    <div class="alert alert-warning">合約將於 <strong>@c.DaysLeft 天後</strong>（@c.ValidTo.ToString("yyyy/MM/dd")）到期。建議現在發起續約詢價，避免到期後沒有合約價可用。</div>
+}
+@if (c.Terminated)
+{
+    <div class="alert alert-danger">此合約已終止：@c.TerminateReason</div>
+}
+@if (renewals.Count > 0)
+{
+    <div class="alert alert-info">已發起續約詢價：@foreach (var r in renewals) { <a asp-controller="Rfq" asp-action="Details" asp-route-id="@r.Id" class="me-2">@r.No（@r.Status.Text()）</a> }</div>
+}
+
+<div class="row g-3 mb-3">
+    <div class="col-lg-6">
+        <div class="card p-3 h-100">
+            <h6>合約條件</h6>
+            <dl class="row small mb-0">
+                <dt class="col-4">合約單價</dt>
+                <dd class="col-8"><span class="fs-5 fw-bold">@c.UnitPrice.ToString("N2")</span> @c.Currency / @m.Unit（未稅）</dd>
+                @if (c.Tiers.Count > 0)
+                {
+                    <dt class="col-4">階梯價</dt>
+                    <dd class="col-8">
+                        <table class="table table-sm table-bordered mb-0 w-auto">
+                            <thead class="table-light"><tr><th>數量</th><th class="num">單價</th></tr></thead>
+                            <tbody>@foreach (var t in c.Tiers.OrderBy(t => t.MinQty)) { <tr><td>≥ @t.MinQty.ToString("N0")</td><td class="num">@t.UnitPrice.ToString("N2")</td></tr> }</tbody>
+                        </table>
+                        <div class="text-muted">每次下單依該次數量套用對應階梯</div>
+                    </dd>
+                }
+                <dt class="col-4">有效期間</dt><dd class="col-8">@c.ValidFrom.ToString("yyyy/MM/dd") ~ @c.ValidTo.ToString("yyyy/MM/dd") @if (c.IsActive) { <span class="text-muted">（剩 @c.DaysLeft 天）</span> }</dd>
+                <dt class="col-4">最小訂購量</dt><dd class="col-8">@c.Moq.ToString("N0") @m.Unit</dd>
+                <dt class="col-4">交期</dt><dd class="col-8">下單後 @c.LeadTimeDays 天</dd>
+                <dt class="col-4">付款條件</dt><dd class="col-8">@c.PaymentTerms</dd>
+                <dt class="col-4">來源</dt>
+                <dd class="col-8">
+                    @if (c.SourceRfqId is int rid) { <span>詢價決標 </span><a asp-controller="Rfq" asp-action="Details" asp-route-id="@rid" asp-route-tab="award">@db.FindRfq(rid)?.No</a> }
+                    else { <span>@c.Remark</span> }
+                </dd>
+                @if (renewedFrom != null) { <dt class="col-4">取代合約</dt><dd class="col-8"><a asp-action="Details" asp-route-id="@renewedFrom.Id">@renewedFrom.No</a>（舊合約 @renewedFrom.UnitPrice.ToString("N2")）</dd> }
+                @if (replacedBy != null) { <dt class="col-4">被取代</dt><dd class="col-8">由 <a asp-action="Details" asp-route-id="@replacedBy.Id">@replacedBy.No</a> 取代（新價 @replacedBy.UnitPrice.ToString("N2")）</dd> }
+            </dl>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="card p-3 h-100">
+            <h6>承諾量與使用狀況</h6>
+            @if (c.CommittedQty > 0)
+            {
+                <div class="progress mb-1" style="height:14px"><div class="progress-bar @(used > c.CommittedQty ? "bg-danger" : "")" style="width:@(pct)%">@(pct)%</div></div>
+                <div class="small mb-3">已下單 <strong>@used.ToString("N0")</strong> / 承諾 @c.CommittedQty.ToString("N0") @m.Unit，剩餘 @Math.Max(0, c.CommittedQty - used).ToString("N0")</div>
+                <div class="help small mb-3">承諾量是對供應商「這段期間大約會買多少」的承諾，供應商依此給出較好的價格。用量明顯不足時，續約時價格可能被調漲；超出承諾量太多，也可以要求更優惠的價格。</div>
+            }
+            else { <div class="text-muted small mb-3">此合約沒有承諾量</div> }
+            <div class="small">依合約下單金額累計：<strong>@spend.ToString("N0")</strong>（@pos.Count 張採購單）</div>
+            @if (others.Count > 0)
+            {
+                <div class="small mt-3">同料件其他生效中合約（多來源）：
+                    @foreach (var o in others) { <div><a asp-action="Details" asp-route-id="@o.Id">@o.No</a> @db.Supplier(o.SupplierId).Name @o.UnitPrice.ToString("N2")</div> }
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@if (c.IsActive)
+{
+    <div class="card border-primary p-3 mb-3">
+        <h6>依合約下單</h6>
+        <div class="help mb-2">合約有效期間內不必重新詢價，輸入數量與交期即可直接以合約價開立採購單給 @s.Name。</div>
+        <form asp-action="Release" asp-route-id="@c.Id" method="post" class="row g-2 align-items-end">
+            <div class="col-md-2"><label class="form-label small mb-0">數量（@m.Unit）</label><input name="qty" id="relQty" type="number" step="any" min="@c.Moq.ToString("0.##")" required value="@c.Moq.ToString("0.##")" class="form-control form-control-sm" /></div>
+            <div class="col-md-3"><label class="form-label small mb-0">需求交貨日</label><input name="deliveryDate" type="date" required value="@DateTime.Today.AddDays(c.LeadTimeDays).ToString("yyyy-MM-dd")" class="form-control form-control-sm" /></div>
+            <div class="col-md-2"><label class="form-label small mb-0">交貨地點</label><input name="deliveryPlace" value="新竹廠" class="form-control form-control-sm" /></div>
+            <div class="col-md-3 small">適用單價 <strong id="relPrice"></strong><br />金額 <strong id="relTotal"></strong></div>
+            <div class="col-md-2 text-end"><button class="btn btn-primary">開立採購單</button></div>
+        </form>
+    </div>
+}
+
+<div class="row g-3">
+    <div class="col-lg-7">
+        <div class="card p-3">
+            <h6>依此合約開立的採購單</h6>
+            <table class="table table-sm mb-0">
+                <thead class="table-light"><tr><th>採購單號</th><th>開立日</th><th class="num">數量</th><th class="num">單價</th><th class="num">金額</th><th>狀態</th></tr></thead>
+                <tbody>
+                @foreach (var po in pos)
+                {
+                    var l = po.Lines[0];
+                    <tr><td><a asp-controller="PurchaseOrders" asp-action="Details" asp-route-id="@po.Id">@po.No</a></td><td>@po.CreatedAt.ToString("yyyy/MM/dd")</td><td class="num">@l.Qty.ToString("N0")</td><td class="num">@l.UnitPrice.ToString("N2")</td><td class="num">@po.Total.ToString("N0")</td><td><span class="badge bg-@(po.Status == "已發出" ? "primary" : "success")">@po.Status</span></td></tr>
+                }
+                @if (pos.Count == 0) { <tr><td colspan="6" class="text-muted text-center">尚無</td></tr> }
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="card p-3">
+            <h6>異動紀錄</h6>
+            <table class="table table-sm mb-0 small">
+                <tbody>
+                @foreach (var log in c.Logs.OrderByDescending(l => l.At))
+                {
+                    <tr><td class="text-nowrap">@log.At.ToString("yyyy/MM/dd")</td><td>@log.User</td><td>@log.Action</td></tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+<script>
+    var tiers = @Html.Raw(tiersJson), flat = @c.UnitPrice.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    function calcRelease() {
+        var q = Number($('#relQty').val() || 0);
+        var p = tierPriceAt(tiers, q) ?? flat;
+        $('#relPrice').text(p.toLocaleString(undefined, { minimumFractionDigits: 2 }));
+        $('#relTotal').text(Math.round(p * q).toLocaleString());
+    }
+    $('#relQty').on('input', calcRelease);
+    calcRelease();
+</script>
+}

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@ViewData["Title"] - 供應商協同平台</title>
+    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+</head>
+<body class="portal">
+    @{
+        var me = ViewBag.Me as Supplier;
+        var act = ViewContext.RouteData.Values["action"]?.ToString();
+    }
+    <nav class="navbar navbar-expand-md navbar-dark portal-nav mb-3">
+        <div class="container-xl">
+            <a class="navbar-brand fw-bold" asp-controller="Portal" asp-action="Index">供應商協同平台 <small class="fw-normal opacity-75">Supplier Portal</small></a>
+            @if (me != null)
+            {
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target=".navbar-collapse" aria-label="切換選單"><span class="navbar-toggler-icon"></span></button>
+                <div class="navbar-collapse collapse">
+                    <ul class="navbar-nav me-auto">
+                        <li class="nav-item"><a class="nav-link @(act is "Index" or "Rfq" ? "active" : "")" asp-action="Index">詢價邀請</a></li>
+                        <li class="nav-item"><a class="nav-link @(act == "Orders" ? "active" : "")" asp-action="Orders">我的採購單</a></li>
+                        <li class="nav-item"><a class="nav-link @(act == "Contracts" ? "active" : "")" asp-action="Contracts">我的合約</a></li>
+                    </ul>
+                    <span class="navbar-text small me-3">@me.Code @me.Name</span>
+                    <a class="btn btn-sm btn-outline-light" asp-action="Logout">登出</a>
+                </div>
+            }
+        </div>
+    </nav>
+    <div class="container-xl">
+        <main class="pb-3">
+            @if (TempData["Msg"] is string msg)
+            {
+                <div class="alert alert-success alert-dismissible fade show">@msg<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+            }
+            @if (TempData["Error"] is string err)
+            {
+                <div class="alert alert-danger alert-dismissible fade show"><strong>無法執行：</strong>@err<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+            }
+            @RenderBody()
+        </main>
+    </div>
+    <footer class="border-top footer text-muted">
+        <div class="container-xl small">供應商協同平台 Demo ・ 這是供應商看到的畫面，採購內部系統請到 <a href="/">詢比議價系統</a></div>
+    </footer>
+    <script src="~/lib/jquery/dist/jquery.min.js"></script>
+    <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="~/js/site.js" asp-append-version="true"></script>
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

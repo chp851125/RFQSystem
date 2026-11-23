@@ -1,0 +1,834 @@
+@model RfqDetailVm
+@{
+    var r = Model.Rfq;
+    var db = Model.Db;
+    var cmp = Model.Compare;
+    ViewData["Title"] = r.No;
+    var quotedIds = r.InvitedSupplierIds.Where(id => MockDb.LatestQuote(r, id) != null).ToList();
+    var canNegotiate = r.Status is RfqStatus.Comparing or RfqStatus.Negotiating;
+    var pendingNeg = r.Negotiations.Where(n => !n.Replied).ToList();
+    var canOpen = db.CanOpen(r);
+    var steps = new[] { RfqStatus.Draft, RfqStatus.Quoting, RfqStatus.Comparing, RfqStatus.Negotiating, RfqStatus.PendingApproval, RfqStatus.Awarded, RfqStatus.PoCreated };
+    var curIdx = Array.IndexOf(steps, r.Status);
+    string TabCls(string t) => Model.Tab == t ? "active" : "";
+    string PaneCls(string t) => Model.Tab == t ? "show active" : "";
+    string Lbl(RfqLine l) { var m = db.Material(l.MaterialId); return $"{m.PartNo} {m.Name}"; }
+}
+
+<div class="d-flex flex-wrap justify-content-between align-items-start mb-2 gap-2">
+    <div>
+        <a asp-action="Index" class="small">← 詢價單列表</a>
+        <h3 class="mb-0">@r.No　@r.Title <span class="badge bg-@r.Status.Badge() fs-6 align-middle">@r.Status.Text()</span></h3>
+        <div class="text-muted small">採購：@r.Buyer ・ 需求部門：@r.Department ・ 建立：@r.CreatedAt.ToString("yyyy/MM/dd") ・ 報價截止：@r.Deadline.ToString("yyyy/MM/dd")</div>
+    </div>
+    <div class="d-flex flex-wrap gap-2 no-print">
+        @switch (r.Status)
+        {
+            case RfqStatus.Draft:
+                <form asp-action="Send" asp-route-id="@r.Id" method="post"><button class="btn btn-primary">發出詢價</button></form>
+                break;
+            case RfqStatus.Quoting:
+                <form asp-action="SimulateQuotes" asp-route-id="@r.Id" method="post"><button class="btn btn-outline-primary">模擬供應商報價</button></form>
+                if (r.SealedBid)
+                {
+                    <a href="?tab=quotes" class="btn @(canOpen.Ok ? "btn-danger" : "btn-outline-secondary")">開標@(canOpen.Ok ? "（可開標）" : "")</a>
+                }
+                else
+                {
+                    <form asp-action="CloseQuoting" asp-route-id="@r.Id" method="post"><button class="btn btn-primary">截止報價，進入比價</button></form>
+                }
+                break;
+            case RfqStatus.Comparing:
+            case RfqStatus.Negotiating:
+                <a href="?tab=negotiate" class="btn btn-outline-warning">議價</a>
+                <a href="?tab=award" class="btn btn-success">決標</a>
+                break;
+            case RfqStatus.PendingApproval:
+                <a href="?tab=award" class="btn btn-danger">前往簽核</a>
+                break;
+            case RfqStatus.Awarded:
+                <form asp-action="CreatePo" asp-route-id="@r.Id" method="post"><button class="btn btn-dark">轉採購單</button></form>
+                break;
+        }
+        @if (r.Status is not (RfqStatus.PoCreated or RfqStatus.Cancelled))
+        {
+            <form asp-action="Cancel" asp-route-id="@r.Id" method="post" onsubmit="var x = prompt('請輸入取消原因'); if (x === null) return false; this.reason.value = x;">
+                <input type="hidden" name="reason" />
+                <button class="btn btn-outline-secondary">取消詢價</button>
+            </form>
+        }
+    </div>
+</div>
+
+@if (r.Status != RfqStatus.Cancelled)
+{
+    <div class="stepper mb-3 rounded overflow-hidden">
+        @for (var i = 0; i < steps.Length; i++)
+        {
+            <div class="step @(i < curIdx ? "done" : i == curIdx ? "current" : "")">@(i + 1). @steps[i].Text()</div>
+        }
+    </div>
+}
+
+<ul class="nav nav-tabs" role="tablist">
+    <li class="nav-item"><a class="nav-link @TabCls("info")" data-bs-toggle="tab" href="#info">基本資料</a></li>
+    <li class="nav-item"><a class="nav-link @TabCls("suppliers")" data-bs-toggle="tab" href="#suppliers">邀請供應商 <span class="badge bg-secondary">@r.InvitedSupplierIds.Count</span></a></li>
+    <li class="nav-item"><a class="nav-link @TabCls("quotes")" data-bs-toggle="tab" href="#quotes">報價 <span class="badge bg-secondary">@r.Quotes.Count</span></a></li>
+    <li class="nav-item"><a class="nav-link @TabCls("compare")" data-bs-toggle="tab" href="#compare">比價分析</a></li>
+    <li class="nav-item"><a class="nav-link @TabCls("negotiate")" data-bs-toggle="tab" href="#negotiate">議價 <span class="badge bg-secondary">@r.Negotiations.Count</span></a></li>
+    <li class="nav-item"><a class="nav-link @TabCls("award")" data-bs-toggle="tab" href="#award">決標與簽核</a></li>
+    <li class="nav-item"><a class="nav-link @TabCls("logs")" data-bs-toggle="tab" href="#logs">異動紀錄</a></li>
+</ul>
+
+<div class="tab-content bg-white p-3 border border-top-0 rounded-bottom mb-3">
+
+    @* ================= 基本資料 ================= *@
+    <div class="tab-pane fade @PaneCls("info")" id="info">
+        <div class="row mb-3 small">
+            <div class="col-md-3"><span class="text-muted">幣別：</span>@r.Currency</div>
+            <div class="col-md-3"><span class="text-muted">交貨地點：</span>@r.DeliveryPlace</div>
+            <div class="col-md-6"><span class="text-muted">備註：</span>@(string.IsNullOrEmpty(r.Remark) ? "-" : r.Remark)</div>
+            <div class="col-md-12 mt-1"><span class="text-muted">報價方式：</span>
+                @if (!r.SealedBid) { <span class="badge bg-light text-dark border">公開報價</span> <span class="text-muted">報價送達即可檢視</span> }
+                else if (r.IsSealed) { <span class="badge bg-dark">密封中</span> <span class="text-muted">開標前任何人都看不到報價內容</span> }
+                else { <span class="badge bg-success">已開標</span> <span class="text-muted">@r.OpenedAt?.ToString("yyyy/MM/dd HH:mm")</span> }
+            </div>
+        </div>
+        @if (r.OpeningRecord.Count > 0)
+        {
+            <div class="card border p-3 mb-3">
+                <h6>開標紀錄</h6>
+                <div class="small mb-2">開標時間：@r.OpenedAt?.ToString("yyyy/MM/dd HH:mm")　開標人：@r.OpenedBy　監標人：@r.Witness</div>
+                <table class="table table-sm mb-0">
+                    <thead class="table-light"><tr><th>供應商</th><th>結果</th><th>投標時間</th><th class="num">開標時總額</th><th>備註</th></tr></thead>
+                    <tbody>
+                    @foreach (var e in r.OpeningRecord.OrderBy(e => e.Total ?? decimal.MaxValue))
+                    {
+                        <tr>
+                            <td>@db.Supplier(e.SupplierId).Name</td>
+                            <td><span class="badge bg-@(e.Result == "已投標" ? "success" : "secondary")">@e.Result</span></td>
+                            <td>@e.SubmittedAt?.ToString("MM/dd HH:mm")</td>
+                            <td class="num">@e.Total?.ToString("N0")</td>
+                            <td class="small">@e.Note</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+                <div class="small text-muted mt-2">開標紀錄是開標當下的快照，之後議價產生的新報價不會改變此紀錄，可供稽核比對。</div>
+            </div>
+        }
+        <table class="table table-sm">
+            <thead class="table-light"><tr><th>#</th><th>料號</th><th>品名 / 規格</th><th class="num">數量</th><th>單位</th><th class="num">目標單價</th><th class="num">目標小計</th><th class="num">上次採購價</th><th>需求日</th></tr></thead>
+            <tbody>
+            @foreach (var lc in cmp.Lines)
+            {
+                <tr>
+                    <td>@lc.Line.Id</td>
+                    <td><a asp-controller="Materials" asp-action="Details" asp-route-id="@lc.Material.Id">@lc.Material.PartNo</a></td>
+                    <td>@lc.Material.Name <div class="small text-muted">@lc.Material.Spec</div></td>
+                    <td class="num">@lc.Line.Qty.ToString("N0")</td>
+                    <td>@lc.Material.Unit</td>
+                    <td class="num">@lc.Line.TargetPrice.ToString("N2")</td>
+                    <td class="num">@((lc.Line.TargetPrice * lc.Line.Qty).ToString("N0"))</td>
+                    <td class="num">@(lc.LastPurchasePrice?.ToString("N2") ?? "-")</td>
+                    <td>@lc.Line.RequiredDate.ToString("yyyy/MM/dd")</td>
+                </tr>
+            }
+            </tbody>
+            <tfoot><tr><th colspan="6" class="num">目標總額</th><th class="num">@r.TargetTotal.ToString("N0")</th><th colspan="2"></th></tr></tfoot>
+        </table>
+        <div class="help">「目標單價」為內部預算，只有採購看得到。「上次採購價」來自歷史成交紀錄，是判斷報價是否合理的重要依據。</div>
+    </div>
+
+    @* ================= 邀請供應商 ================= *@
+    <div class="tab-pane fade @PaneCls("suppliers")" id="suppliers">
+        @{
+            var cats = r.Lines.Select(l => db.Material(l.MaterialId).Category).Distinct().ToList();
+        }
+        @if (r.Status == RfqStatus.Draft)
+        {
+            <div class="help mb-3">勾選要邀請報價的供應商。系統依料件分類（@string.Join("、", cats)）標示「推薦」；未列入合格供應商名單（AVL）的廠商不能邀請。內控常見要求至少 @MockDb.MinSuppliersForCompare 家比價。</div>
+            <form asp-action="Invite" asp-route-id="@r.Id" method="post">
+                <table class="table table-sm table-hover">
+                    <thead class="table-light"><tr><th></th><th>供應商</th><th>分類</th><th>等級</th><th class="num">品質</th><th class="num">準交率</th><th>付款條件</th><th></th></tr></thead>
+                    <tbody>
+                    @foreach (var s in db.Suppliers.OrderByDescending(s => s.Categories.Intersect(cats).Any()).ThenBy(s => s.Code))
+                    {
+                        var rec = s.Categories.Intersect(cats).Any();
+                        <tr class="@(s.IsQualified ? "" : "text-muted")">
+                            <td><input type="checkbox" class="form-check-input" name="supplierIds" value="@s.Id" checked="@r.InvitedSupplierIds.Contains(s.Id)" disabled="@(!s.IsQualified)" /></td>
+                            <td>@s.Code @s.Name</td>
+                            <td>@string.Join("、", s.Categories)</td>
+                            <td><span class="badge bg-secondary">@s.Grade</span></td>
+                            <td class="num">@s.QualityScore</td>
+                            <td class="num">@s.OnTimeRate%</td>
+                            <td>@s.PaymentTerms</td>
+                            <td>
+                                @if (!s.IsQualified) { <span class="badge bg-danger">未列入 AVL</span> }
+                                else if (rec) { <span class="badge bg-success">推薦</span> }
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+                <button class="btn btn-primary">儲存邀請名單</button>
+            </form>
+        }
+        else
+        {
+            <table class="table table-sm">
+                <thead class="table-light"><tr><th>供應商</th><th>聯絡人</th><th>Email</th><th>等級</th><th>報價狀態</th></tr></thead>
+                <tbody>
+                @foreach (var sid in r.InvitedSupplierIds)
+                {
+                    var s = db.Supplier(sid);
+                    var q = MockDb.LatestQuote(r, sid);
+                    <tr>
+                        <td><a asp-controller="Suppliers" asp-action="Details" asp-route-id="@s.Id">@s.Name</a></td>
+                        <td>@s.Contact @s.Phone</td>
+                        <td>@s.Email</td>
+                        <td><span class="badge bg-secondary">@s.Grade</span></td>
+                        <td>@if (r.Declines.TryGetValue(sid, out var why)) { <span class="badge bg-secondary">婉拒：@why</span> } else if (q == null) { <span class="badge bg-light text-dark">未報價</span> } else { <span class="badge bg-success">已報價（第 @q.Round 輪）</span> }</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </div>
+
+    @* ================= 報價 ================= *@
+    <div class="tab-pane fade @PaneCls("quotes")" id="quotes">
+        @{
+            var canEnter = r.InvitedSupplierIds.Where(id =>
+                (r.Status == RfqStatus.Quoting && MockDb.LatestQuote(r, id) == null) ||
+                pendingNeg.Any(n => n.SupplierId == id)).ToList();
+        }
+        @if (r.Status == RfqStatus.Draft)
+        {
+            <div class="text-muted">詢價單尚未發出，供應商還無法報價。</div>
+        }
+        @if (r.IsSealed && r.Status == RfqStatus.Quoting)
+        {
+            <div class="card border-dark p-3 mb-3">
+                <h6>密封投標箱</h6>
+                <div class="help mb-2">密封報價期間，系統只顯示「誰投標了、何時投標」，<strong>價格與內容一律隱藏</strong>（連承辦採購也看不到），避免底價或他廠價格洩漏。開標條件：過了截止時間，或所有受邀廠商都已回覆（提前開標）；開標時需有監標人見證。</div>
+                <table class="table table-sm">
+                    <thead class="table-light"><tr><th>供應商</th><th>狀態</th><th>投標時間</th><th>報價內容</th></tr></thead>
+                    <tbody>
+                    @foreach (var sid in r.InvitedSupplierIds)
+                    {
+                        var q = MockDb.LatestQuote(r, sid);
+                        <tr>
+                            <td>@db.Supplier(sid).Name</td>
+                            <td>
+                                @if (q != null) { <span class="badge bg-success">已投標</span> }
+                                else if (r.Declines.TryGetValue(sid, out var dr)) { <span class="badge bg-secondary">婉拒：@dr</span> }
+                                else { <span class="badge bg-light text-dark border">未回覆</span> }
+                            </td>
+                            <td>@q?.SubmittedAt.ToString("MM/dd HH:mm")</td>
+                            <td>@if (q != null) { <span class="text-muted">密封中，開標後顯示</span> }</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+                <form asp-action="OpenBids" asp-route-id="@r.Id" method="post" class="row g-2 align-items-end">
+                    <div class="col-md-4">
+                        <label class="form-label small mb-0">監標人</label>
+                        <select name="witness" class="form-select form-select-sm" required>
+                            <option value="">-- 請選擇 --</option>
+                            @foreach (var w in MockDb.Witnesses) { <option>@w</option> }
+                        </select>
+                    </div>
+                    <div class="col-md-5 small @(canOpen.Ok ? "text-success" : "text-muted")">@(canOpen.Ok ? "✓ " : "") @canOpen.Reason</div>
+                    <div class="col-md-3 text-end"><button class="btn btn-danger" @(canOpen.Ok ? "" : "disabled")>開標</button></div>
+                </form>
+            </div>
+        }
+        @foreach (var sid in r.InvitedSupplierIds)
+        {
+            var s = db.Supplier(sid);
+            var quotes = r.Quotes.Where(q => q.SupplierId == sid).OrderBy(q => q.Round).ToList();
+            if (quotes.Count == 0 || r.IsSealed) { continue; }
+            <div class="mb-3">
+                <h6>@s.Name</h6>
+                <table class="table table-sm table-bordered">
+                    <thead class="table-light">
+                        <tr><th>輪次</th><th>報價時間</th><th>來源</th>
+                            @foreach (var l in r.Lines) { <th class="num">@Lbl(l)<div class="small fw-normal text-muted">單價 / 交期 / MOQ</div></th> }
+                            <th class="num">總額</th><th>付款條件</th><th>有效期</th><th>說明</th></tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var q in quotes)
+                    {
+                        <tr>
+                            <td>@(q.Round == 1 ? "初次報價" : $"第 {q.Round} 輪（議價）")</td>
+                            <td>@q.SubmittedAt.ToString("MM/dd HH:mm")</td>
+                            <td><span class="badge bg-@(q.Source == "入口網站" ? "primary" : "secondary")">@q.Source</span></td>
+                            @foreach (var l in r.Lines)
+                            {
+                                var ql = q.Lines.FirstOrDefault(x => x.RfqLineId == l.Id);
+                                <td class="num">@if (ql != null) {
+                                    <strong>@ql.UnitPrice.ToString("N2")</strong> <span class="small text-muted">/ @(ql.LeadTimeDays)天 / @ql.Moq.ToString("N0")</span>
+                                    if (ql.Tiers.Count > 0) { <div class="small text-primary">階梯 @ql.TierText</div> }
+                                }</td>
+                            }
+                            <td class="num">@q.Lines.Sum(x => x.UnitPrice * r.Lines.First(l => l.Id == x.RfqLineId).Qty).ToString("N0")</td>
+                            <td>@q.PaymentTerms</td>
+                            <td>@q.ValidUntil.ToString("yyyy/MM/dd")</td>
+                            <td class="small">@q.Remark</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        }
+        @{
+            var notQuoted = r.InvitedSupplierIds.Where(id => MockDb.LatestQuote(r, id) == null && !r.Declines.ContainsKey(id)).Select(id => db.Supplier(id).Name).ToList();
+        }
+        @if (r.Status != RfqStatus.Draft && !r.IsSealed && notQuoted.Count > 0)
+        {
+            <div class="small text-muted mb-1">尚未報價：@string.Join("、", notQuoted)</div>
+        }
+        @foreach (var d in r.Declines)
+        {
+            <div class="small text-muted mb-1">婉拒報價：@db.Supplier(d.Key).Name（@d.Value）</div>
+        }
+
+        @if (canEnter.Count > 0)
+        {
+            <div class="card border p-3">
+                <h6>代供應商登錄報價</h6>
+                <div class="help mb-2">供應商通常在 <a asp-controller="Portal" asp-action="Login" target="_blank">供應商入口網站</a> 自行報價；這裡是給以 Email / 紙本回傳報價單的廠商，由採購代為登錄（系統會標示來源為「採購代登」）。議價中的供應商在此登錄的是新一輪報價。</div>
+                <form asp-action="SubmitQuote" asp-route-id="@r.Id" method="post">
+                    <div class="row g-2 mb-2">
+                        <div class="col-md-4">
+                            <label class="form-label small">供應商</label>
+                            <select name="supplierId" class="form-select form-select-sm">
+                                @foreach (var sid in canEnter) { <option value="@sid">@db.Supplier(sid).Name</option> }
+                            </select>
+                        </div>
+                        <div class="col-md-3"><label class="form-label small">付款條件</label><input name="paymentTerms" class="form-control form-control-sm" placeholder="空白則帶供應商預設" /></div>
+                        <div class="col-md-2"><label class="form-label small">報價有效期</label><input name="validUntil" type="date" value="@DateTime.Today.AddDays(30).ToString("yyyy-MM-dd")" class="form-control form-control-sm" /></div>
+                        <div class="col-md-3"><label class="form-label small">說明</label><input name="remark" class="form-control form-control-sm" /></div>
+                    </div>
+                    <table class="table table-sm">
+                        <thead><tr><th>項目</th><th class="num">數量</th><th>單價 *</th><th>交期（天）</th><th>MOQ</th></tr></thead>
+                        <tbody>
+                        @foreach (var l in r.Lines)
+                        {
+                            <tr>
+                                <td>@Lbl(l)</td>
+                                <td class="num">@l.Qty.ToString("N0")</td>
+                                <td>
+                                    <input name="prices[@l.Id]" data-line="@l.Id" type="number" step="any" required class="form-control form-control-sm line-price" />
+                                    <button type="button" class="btn btn-link btn-sm p-0 tier-toggle" data-line="@l.Id">＋ 階梯報價</button>
+                                </td>
+                                <td><input name="leads[@l.Id]" type="number" value="14" class="form-control form-control-sm" /></td>
+                                <td><input name="moqs[@l.Id]" type="number" step="any" value="1" class="form-control form-control-sm" /></td>
+                            </tr>
+                            <partial name="_TierEditor" model="@(new TierEditorVm(l.Id, l.Qty, db.Material(l.MaterialId).Unit, new(), 5))" />
+                        }
+                        </tbody>
+                    </table>
+                    <button class="btn btn-primary btn-sm">送出報價</button>
+                </form>
+            </div>
+        }
+    </div>
+
+    @* ================= 比價分析 ================= *@
+    <div class="tab-pane fade @PaneCls("compare")" id="compare">
+        @if (r.IsSealed)
+        {
+            <div class="text-center py-5">
+                <div class="fs-4 mb-2">密封中</div>
+                <div class="text-muted">已收到 @quotedIds.Count 家投標。開標後才能檢視價格與比價分析。</div>
+                <a href="?tab=quotes" class="btn btn-outline-dark btn-sm mt-3">前往開標</a>
+            </div>
+        }
+        else if (quotedIds.Count == 0)
+        {
+            <div class="text-muted">目前還沒有任何報價可以比較。</div>
+        }
+        else
+        {
+            if (r.Status == RfqStatus.Quoting)
+            {
+                <div class="alert alert-warning py-2 small">這是「公開報價」詢價單：報價尚未截止就能看到價格，比價結果僅供參考。重要採購建議使用「密封報價」。</div>
+            }
+            <h6>1. 價格比較表 <span class="small text-muted fw-normal">（綠色＝該項最低價，紅色＝最高價，顯示最新一輪報價）</span></h6>
+            <div class="table-responsive">
+            <table class="table table-sm table-bordered">
+                <thead class="table-light">
+                    <tr>
+                        <th>項目</th><th class="num">數量</th><th class="num">目標價</th><th class="num">上次採購價</th>
+                        @foreach (var sid in quotedIds) { <th class="num">@db.Supplier(sid).Name<div class="small fw-normal text-muted">第 @MockDb.LatestQuote(r, sid)!.Round 輪</div></th> }
+                        <th class="num">最低價 vs 目標</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var lc in cmp.Lines)
+                {
+                    <tr>
+                        <td>@lc.Material.PartNo @lc.Material.Name</td>
+                        <td class="num">@lc.Line.Qty.ToString("N0")</td>
+                        <td class="num">@lc.Line.TargetPrice.ToString("N2")</td>
+                        <td class="num">@(lc.LastPurchasePrice?.ToString("N2") ?? "-")</td>
+                        @foreach (var sid in quotedIds)
+                        {
+                            if (lc.Cells.TryGetValue(sid, out var c))
+                            {
+                                var cls = lc.Cells.Count > 1 && c.UnitPrice == lc.MinPrice ? "cell-best" : lc.Cells.Count > 1 && c.UnitPrice == lc.MaxPrice ? "cell-worst" : "";
+                                var next = c.NextTier(lc.Line.Qty);
+                                <td class="num @cls">@c.UnitPrice.ToString("N2")<div class="small text-muted fw-normal">交期 @(c.LeadTimeDays)天・MOQ @c.Moq.ToString("N0")</div>
+                                    @if (next != null) { <div class="small text-primary fw-normal" title="@c.TierText">階梯：≥@next.MinQty.ToString("N0") 降至 @next.UnitPrice.ToString("N2")</div> }
+                                    else if (c.Tiers.Count > 0) { <div class="small text-primary fw-normal" title="@c.TierText">階梯價（已達最低階）</div> }
+                                </td>
+                            }
+                            else { <td class="num text-muted">未報</td> }
+                        }
+                        @{
+                            var diff = lc.MinPrice.HasValue && lc.Line.TargetPrice > 0 ? (lc.MinPrice.Value - lc.Line.TargetPrice) / lc.Line.TargetPrice * 100 : (decimal?)null;
+                        }
+                        <td class="num @(diff > 0 ? "text-danger" : "text-success")">@(diff.HasValue ? diff.Value.ToString("+0.0;-0.0;0") + "%" : "-")</td>
+                    </tr>
+                }
+                </tbody>
+                <tfoot>
+                    <tr class="table-light">
+                        <th colspan="2">總額（最新報價）</th><th class="num">@r.TargetTotal.ToString("N0")</th><th></th>
+                        @foreach (var sid in quotedIds) { var sc = cmp.Suppliers.First(x => x.Supplier.Id == sid); <th class="num">@sc.Total.ToString("N0")</th> }
+                        <th></th>
+                    </tr>
+                    <tr>
+                        <td colspan="4" class="small">初次報價總額 → 議價降幅</td>
+                        @foreach (var sid in quotedIds)
+                        {
+                            var sc = cmp.Suppliers.First(x => x.Supplier.Id == sid);
+                            var drop = sc.FirstTotal - sc.Total;
+                            <td class="num small">@sc.FirstTotal.ToString("N0")@if (drop > 0) { <div class="text-success">↓ @drop.ToString("N0")（@((drop / sc.FirstTotal * 100).ToString("0.0"))%）</div> }</td>
+                        }
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </table>
+            </div>
+
+            <div class="row g-3 mb-4">
+                <div class="col-md-4"><div class="border rounded p-2"><div class="small text-muted">目標總額</div><div class="fs-5">@r.TargetTotal.ToString("N0")</div></div></div>
+                <div class="col-md-4"><div class="border rounded p-2"><div class="small text-muted">整包最低總額（單一供應商）</div><div class="fs-5">@(cmp.Suppliers.Where(s => s.QuotedAll).Select(s => (decimal?)s.Total).Min()?.ToString("N0") ?? "-")</div></div></div>
+                <div class="col-md-4"><div class="border rounded p-2"><div class="small text-muted">逐項挑最低價合計（分批決標）</div><div class="fs-5 text-success">@cmp.LowestPerLineTotal.ToString("N0")</div></div></div>
+            </div>
+
+            var tierLines = cmp.Lines.Where(lc => lc.Cells.Values.Any(c => c.Tiers.Count > 0)).ToList();
+            if (tierLines.Count > 0)
+            {
+                var tierData = tierLines.ToDictionary(lc => lc.Line.Id, lc => lc.Cells.ToDictionary(
+                    c => c.Key, c => new { flat = c.Value.UnitPrice, tiers = c.Value.Tiers.Select(t => new { q = t.MinQty, p = t.UnitPrice }) }));
+                <h6>2. 階梯價格試算 <span class="small text-muted fw-normal">（不同採購數量下，誰最便宜？綠色＝該數量最低價）</span></h6>
+                <div class="help mb-2">階梯報價下，<strong>最便宜的廠商可能隨數量改變</strong>；也常出現「多買一點總價反而差不多」的情況。下表列出各廠商的價格分界點，最上面一列可輸入任意數量試算。未提供階梯的廠商以單一價格計算。</div>
+                foreach (var lc in tierLines)
+                {
+                    var sids = lc.Cells.Keys.ToList();
+                    var qtys = lc.Cells.Values.SelectMany(c => c.Tiers.Select(t => t.MinQty)).Append(lc.Line.Qty).Distinct().OrderBy(q => q).ToList();
+                    <div class="table-responsive mb-3">
+                    <table class="table table-sm table-bordered mb-0">
+                        <thead class="table-light">
+                            <tr><th style="width:200px">@lc.Material.PartNo @lc.Material.Name<div class="small fw-normal text-muted">採購數量</div></th>
+                                @foreach (var sid in sids) { <th class="num">@db.Supplier(sid).Name<div class="small fw-normal text-muted">單價 / 總額</div></th> }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="table-warning">
+                                <td><input type="number" min="1" class="form-control form-control-sm sim-qty" data-line="@lc.Line.Id" placeholder="輸入數量試算" /></td>
+                                @foreach (var sid in sids) { <td class="num sim-cell" data-line="@lc.Line.Id" data-sid="@sid"></td> }
+                            </tr>
+                            @foreach (var q in qtys)
+                            {
+                                var prices = sids.ToDictionary(s => s, s => lc.Cells[s].PriceAt(q));
+                                var min = prices.Values.Min();
+                                var isReq = q == lc.Line.Qty;
+                                <tr class="@(isReq ? "fw-bold" : "")">
+                                    <td>≥ @q.ToString("N0") @lc.Material.Unit @if (isReq) { <span class="badge bg-primary">本次需求</span> }</td>
+                                    @foreach (var sid in sids)
+                                    {
+                                        <td class="num @(sids.Count > 1 && prices[sid] == min ? "cell-best" : "")">@prices[sid].ToString("N2") <span class="small text-muted fw-normal">/ @((prices[sid] * q).ToString("N0"))</span></td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                    </div>
+                }
+                <script>window.tierData = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(tierData));</script>
+            }
+
+            <h6>@(tierLines.Count > 0 ? "3" : "2"). 加權評分 <span class="small text-muted fw-normal">（不只看價格，綜合考量交期與品質）</span></h6>
+            <form method="get" class="row g-2 align-items-end mb-2 no-print">
+                <input type="hidden" name="tab" value="compare" />
+                <div class="col-auto"><label class="form-label small mb-0">價格權重 %</label><input name="pw" type="number" value="@cmp.PriceWeight" class="form-control form-control-sm" style="width:90px" /></div>
+                <div class="col-auto"><label class="form-label small mb-0">交期權重 %</label><input name="lw" type="number" value="@cmp.LeadWeight" class="form-control form-control-sm" style="width:90px" /></div>
+                <div class="col-auto"><label class="form-label small mb-0">品質權重 %</label><input name="qw" type="number" value="@cmp.QualityWeight" class="form-control form-control-sm" style="width:90px" /></div>
+                <div class="col-auto"><button class="btn btn-sm btn-outline-primary">重新計算</button></div>
+            </form>
+            <table class="table table-sm">
+                <thead class="table-light"><tr><th>排名</th><th>供應商</th><th>等級</th><th class="num">總額</th><th class="num">價格分</th><th class="num">平均交期</th><th class="num">交期分</th><th class="num">品質分</th><th class="num">加權總分</th><th style="width:20%"></th></tr></thead>
+                <tbody>
+                @foreach (var s in cmp.Suppliers.Where(s => s.Latest != null).OrderBy(s => s.Rank))
+                {
+                    <tr class="@(s.Rank == 1 ? "table-success" : "")">
+                        <td>@s.Rank</td>
+                        <td>@s.Supplier.Name @if (!s.QuotedAll) { <span class="badge bg-warning text-dark">未報全部項目</span> }</td>
+                        <td><span class="badge bg-secondary">@s.Supplier.Grade</span></td>
+                        <td class="num">@s.Total.ToString("N0")</td>
+                        <td class="num">@s.PriceScore.ToString("0.0")</td>
+                        <td class="num">@s.AvgLead.ToString("0") 天</td>
+                        <td class="num">@s.LeadScore.ToString("0.0")</td>
+                        <td class="num">@s.QualityScore.ToString("0.0")</td>
+                        <td class="num fw-bold">@s.Score.ToString("0.0")</td>
+                        <td><div class="bar" style="width:@(s.Score.ToString("0"))%"></div></td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+            <div class="help">計算方式：價格分＝最低總額 ÷ 該家總額 × 100；交期分＝最短平均交期 ÷ 該家平均交期 × 100；品質分＝品質分數 × 60% + 準交率 × 40%。加權總分依上方權重計算。</div>
+        }
+    </div>
+
+    @* ================= 議價 ================= *@
+    <div class="tab-pane fade @PaneCls("negotiate")" id="negotiate">
+        @if (r.Negotiations.Count == 0)
+        {
+            <div class="text-muted mb-3">尚無議價紀錄。</div>
+        }
+        @foreach (var n in r.Negotiations.OrderByDescending(n => n.Id))
+        {
+            var s = db.Supplier(n.SupplierId);
+            var before = r.Quotes.FirstOrDefault(q => q.SupplierId == n.SupplierId && q.Round == n.Round - 1);
+            var after = r.Quotes.FirstOrDefault(q => q.SupplierId == n.SupplierId && q.Round == n.Round);
+            <div class="card border mb-3">
+                <div class="card-header d-flex justify-content-between">
+                    <span><strong>@s.Name</strong>・第 @n.Round 輪議價・@n.CreatedAt.ToString("yyyy/MM/dd HH:mm")</span>
+                    @if (n.Replied) { <span class="badge bg-success">已回覆</span> } else { <span class="badge bg-warning text-dark">等待供應商回覆</span> }
+                </div>
+                <div class="card-body">
+                    <div class="mb-2"><span class="text-muted">採購說明：</span>@n.Message</div>
+                    <table class="table table-sm mb-2">
+                        <thead><tr><th>項目</th><th class="num">議價前</th><th class="num">我方還價</th><th class="num">供應商回覆價</th><th class="num">降價</th></tr></thead>
+                        <tbody>
+                        @foreach (var l in r.Lines)
+                        {
+                            var p0 = before?.Lines.FirstOrDefault(x => x.RfqLineId == l.Id)?.UnitPrice;
+                            var p1 = after?.Lines.FirstOrDefault(x => x.RfqLineId == l.Id)?.UnitPrice;
+                            <tr>
+                                <td>@Lbl(l)</td>
+                                <td class="num">@p0?.ToString("N2")</td>
+                                <td class="num text-primary">@(n.CounterPrices.TryGetValue(l.Id, out var cp) ? cp.ToString("N2") : "-")</td>
+                                <td class="num fw-bold">@(p1?.ToString("N2") ?? "-")</td>
+                                <td class="num text-success">@(p0.HasValue && p1.HasValue && p1 < p0 ? ((p0.Value - p1.Value) / p0.Value * 100).ToString("0.0") + "%" : "")</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                    @if (n.Replied)
+                    {
+                        <div><span class="text-muted">供應商回覆：</span>@n.Reply</div>
+                    }
+                    else
+                    {
+                        <form asp-action="SimulateReply" asp-route-id="@r.Id" method="post" class="d-inline">
+                            <input type="hidden" name="negotiationId" value="@n.Id" />
+                            <button class="btn btn-sm btn-outline-primary">模擬供應商回覆</button>
+                        </form>
+                        <span class="small text-muted ms-2">供應商會在入口網站看到此議價並回覆；也可以到「報價」頁代為登錄</span>
+                    }
+                </div>
+            </div>
+        }
+
+        @if (canNegotiate)
+        {
+            var candidates = quotedIds.Where(id => pendingNeg.All(n => n.SupplierId != id)).ToList();
+            var priceMap = candidates.ToDictionary(id => id, id => MockDb.LatestQuote(r, id)!.Lines.ToDictionary(l => l.RfqLineId, l => l.UnitPrice));
+            if (candidates.Count > 0)
+            {
+                <div class="card border p-3">
+                    <h6>發起議價</h6>
+                    <div class="help mb-2">常見議價技巧：以<strong>目標價</strong>、<strong>他家最低價</strong>、<strong>歷史成交價</strong>或<strong>年度用量</strong>作為還價依據。預設還價＝目前全場最低價與目標價中較低者。</div>
+                    <form asp-action="Negotiate" asp-route-id="@r.Id" method="post">
+                        <div class="row g-2 mb-2">
+                            <div class="col-md-4">
+                                <label class="form-label small">議價對象</label>
+                                <select name="supplierId" id="negSupplier" class="form-select form-select-sm">
+                                    @foreach (var sid in candidates) { <option value="@sid">@db.Supplier(sid).Name</option> }
+                                </select>
+                            </div>
+                            <div class="col-md-8"><label class="form-label small">議價說明</label><input name="message" class="form-control form-control-sm" value="其他廠商報價較低，請重新評估價格" /></div>
+                        </div>
+                        <table class="table table-sm">
+                            <thead><tr><th>項目</th><th class="num">目標價</th><th class="num">全場最低價</th><th class="num">該供應商目前報價</th><th style="width:160px">我方還價</th></tr></thead>
+                            <tbody>
+                            @foreach (var lc in cmp.Lines)
+                            {
+                                var suggest = Math.Min(lc.Line.TargetPrice > 0 ? lc.Line.TargetPrice : decimal.MaxValue, lc.MinPrice ?? decimal.MaxValue);
+                                <tr>
+                                    <td>@lc.Material.PartNo @lc.Material.Name</td>
+                                    <td class="num">@lc.Line.TargetPrice.ToString("N2")</td>
+                                    <td class="num">@lc.MinPrice?.ToString("N2")</td>
+                                    <td class="num cur-price" data-line="@lc.Line.Id"></td>
+                                    <td><input name="counter[@lc.Line.Id]" type="number" step="any" value="@(suggest == decimal.MaxValue ? "" : suggest.ToString("0.##"))" class="form-control form-control-sm" /></td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                        <button class="btn btn-warning btn-sm">送出議價</button>
+                    </form>
+                </div>
+                <script>
+                    window.negPrices = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(priceMap));
+                </script>
+            }
+        }
+        else if (r.Status is RfqStatus.Draft or RfqStatus.Quoting)
+        {
+            <div class="text-muted">需截止報價、進入比價後才能議價。</div>
+        }
+    </div>
+
+    @* ================= 決標與簽核 ================= *@
+    <div class="tab-pane fade @PaneCls("award")" id="award">
+        @if (canNegotiate && quotedIds.Count > 0)
+        {
+            var best = cmp.BestScore;
+            <div class="help mb-2">每個項目選擇得標供應商，可以全部給同一家，也可以<strong>分批決標</strong>。未選最低價時須填寫理由。送出後依金額進入簽核：
+                @foreach (var m in MockDb.ApprovalMatrix) { <span class="badge bg-light text-dark border">≥ @m.Threshold.ToString("N0")：@m.Role</span> }
+            </div>
+            @if (pendingNeg.Count > 0)
+            {
+                <div class="alert alert-warning py-2 small">仍有議價等待供應商回覆，需先處理才能決標。</div>
+            }
+            <form asp-action="Award" asp-route-id="@r.Id" method="post" id="awardForm">
+                <div class="mb-2 no-print">
+                    <button type="button" class="btn btn-sm btn-outline-success" id="pickLowest">全部選最低價</button>
+                    @if (best != null) { <button type="button" class="btn btn-sm btn-outline-primary" id="pickBest" data-sid="@best.Supplier.Id">整包給評分第一名（@best.Supplier.Name）</button> }
+                </div>
+                <table class="table table-sm table-bordered">
+                    <thead class="table-light"><tr><th>項目</th><th class="num">數量</th>
+                        @foreach (var sid in quotedIds) { <th class="num">@db.Supplier(sid).Name</th> }
+                    </tr></thead>
+                    <tbody>
+                    @foreach (var lc in cmp.Lines)
+                    {
+                        <tr>
+                            <td>@lc.Material.PartNo @lc.Material.Name</td>
+                            <td class="num">@lc.Line.Qty.ToString("N0")</td>
+                            @foreach (var sid in quotedIds)
+                            {
+                                <td class="num @(lc.MinSupplierId == sid ? "cell-best" : "")">
+                                    @if (lc.Cells.TryGetValue(sid, out var c))
+                                    {
+                                        <label class="d-block">
+                                            <input type="radio" class="form-check-input award-radio" name="award[@lc.Line.Id]" value="@sid"
+                                                   data-amount="@((c.UnitPrice * lc.Line.Qty).ToString("0.##"))" data-lowest="@(lc.MinSupplierId == sid ? "1" : "0")"
+                                                   checked="@(lc.MinSupplierId == sid)" />
+                                            @c.UnitPrice.ToString("N2")
+                                        </label>
+                                    }
+                                    else { <span class="text-muted">未報</span> }
+                                </td>
+                            }
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+                <div class="mb-2">決標總額：<strong id="awardTotal" class="fs-5"></strong>　<span class="small text-muted">目標總額 @r.TargetTotal.ToString("N0")</span></div>
+                <div class="mb-2"><label class="form-label small">決標理由（未選最低價時必填）</label><textarea name="reason" class="form-control" rows="2" placeholder="例：交期較短、品質評等 A、與現有模具相容…"></textarea></div>
+                <button class="btn btn-success" @(pendingNeg.Count > 0 ? "disabled" : "")>送出決標簽核</button>
+            </form>
+        }
+        else if (r.Awards.Count == 0)
+        {
+            <div class="text-muted">尚未進入決標階段。</div>
+        }
+
+        @if (r.Awards.Count > 0)
+        {
+            var saving = MockDb.NegotiationSavings(r);
+            <h6>決標結果</h6>
+            <table class="table table-sm">
+                <thead class="table-light"><tr><th>項目</th><th>得標供應商</th><th class="num">數量</th><th class="num">決標單價</th><th class="num">小計</th><th class="num">目標單價</th><th class="num">vs 目標</th></tr></thead>
+                <tbody>
+                @foreach (var a in r.Awards)
+                {
+                    var l = r.Lines.First(x => x.Id == a.RfqLineId);
+                    <tr>
+                        <td>@Lbl(l)</td>
+                        <td>@db.Supplier(a.SupplierId).Name</td>
+                        <td class="num">@a.Qty.ToString("N0")</td>
+                        <td class="num">@a.UnitPrice.ToString("N2")</td>
+                        <td class="num">@((a.Qty * a.UnitPrice).ToString("N0"))</td>
+                        <td class="num">@l.TargetPrice.ToString("N2")</td>
+                        <td class="num @(a.UnitPrice > l.TargetPrice ? "text-danger" : "text-success")">@(l.TargetPrice > 0 ? ((a.UnitPrice - l.TargetPrice) / l.TargetPrice * 100).ToString("+0.0;-0.0;0") + "%" : "-")</td>
+                    </tr>
+                }
+                </tbody>
+                <tfoot><tr><th colspan="4" class="num">決標總額</th><th class="num">@r.AwardTotal.ToString("N0")</th><th colspan="2" class="text-success small">議價節省 @saving.ToString("N0")</th></tr></tfoot>
+            </table>
+            @if (!string.IsNullOrEmpty(r.AwardReason)) { <div class="mb-3"><span class="text-muted">決標理由：</span>@r.AwardReason</div> }
+
+            <h6>簽核流程</h6>
+            <table class="table table-sm">
+                <thead class="table-light"><tr><th>關卡</th><th>角色</th><th>簽核人</th><th>狀態</th><th>意見</th><th>時間</th></tr></thead>
+                <tbody>
+                @foreach (var a in r.Approvals)
+                {
+                    var (txt, cls) = a.Status switch
+                    {
+                        "Approved" => ("核准", "success"),
+                        "Rejected" => ("退回", "danger"),
+                        "Pending" => ("簽核中", "warning text-dark"),
+                        _ => ("未到", "light text-dark")
+                    };
+                    <tr><td>@a.Seq</td><td>@a.Role</td><td>@a.Approver</td><td><span class="badge bg-@cls">@txt</span></td><td>@a.Comment</td><td>@a.At?.ToString("yyyy/MM/dd HH:mm")</td></tr>
+                }
+                </tbody>
+            </table>
+            @if (r.Status == RfqStatus.PendingApproval)
+            {
+                var cur = r.Approvals.First(a => a.Status == "Pending");
+                <div class="card border p-3">
+                    <div class="small text-muted mb-2">Demo：您可以模擬 <strong>@cur.Approver（@cur.Role）</strong> 進行簽核。實務上只有該簽核人登入後才看得到此按鈕。</div>
+                    <form asp-action="Approve" asp-route-id="@r.Id" method="post" class="d-flex gap-2">
+                        <input name="comment" class="form-control form-control-sm" placeholder="簽核意見" />
+                        <button name="approve" value="true" class="btn btn-sm btn-success text-nowrap">核准</button>
+                        <button name="approve" value="false" class="btn btn-sm btn-outline-danger text-nowrap">退回</button>
+                    </form>
+                </div>
+            }
+            @if (r.Status == RfqStatus.Awarded)
+            {
+                <form asp-action="CreatePo" asp-route-id="@r.Id" method="post"><button class="btn btn-dark">簽核完成，轉採購單</button></form>
+            }
+            @if (Model.Pos.Count > 0)
+            {
+                <div class="mt-2">已產生採購單：
+                    @foreach (var po in Model.Pos) { <a asp-controller="PurchaseOrders" asp-action="Details" asp-route-id="@po.Id" class="me-2">@po.No（@db.Supplier(po.SupplierId).Name）</a> }
+                </div>
+            }
+
+            @* ===== 建立合約價 ===== *@
+            var myContracts = db.Contracts.Where(ct => ct.SourceRfqId == r.Id).ToList();
+            if (myContracts.Count > 0)
+            {
+                <div class="mt-3">已建立合約價：
+                    @foreach (var ct in myContracts) { <a asp-controller="Contracts" asp-action="Details" asp-route-id="@ct.Id" class="me-2">@ct.No（@db.Material(ct.MaterialId).PartNo，@ct.Status）</a> }
+                </div>
+            }
+            else if (r.Status is RfqStatus.Awarded or RfqStatus.PoCreated)
+            {
+                <div class="card border-success p-3 mt-3">
+                    <h6>建立合約價（選用）</h6>
+                    <div class="help mb-2">若這些料件之後會重複採購，可把決標價格訂為<strong>合約價</strong>：有效期間內直接依合約下單，不用每次重新詢價。單價、階梯價、交期、付款條件會沿用最後一輪報價。若同一供應商、同一料件已有生效中的合約，舊合約會提前結束並由新合約取代。</div>
+                    <form asp-action="CreateContracts" asp-route-id="@r.Id" method="post">
+                        <div class="row g-2 mb-2">
+                            <div class="col-md-3"><label class="form-label small mb-0">合約開始日</label><input name="validFrom" type="date" value="@DateTime.Today.ToString("yyyy-MM-dd")" class="form-control form-control-sm" /></div>
+                            <div class="col-md-3">
+                                <label class="form-label small mb-0">合約期間</label>
+                                <select name="months" class="form-select form-select-sm">
+                                    <option value="6">6 個月</option>
+                                    <option value="12" selected>12 個月</option>
+                                    <option value="24">24 個月</option>
+                                </select>
+                            </div>
+                        </div>
+                        <table class="table table-sm">
+                            <thead class="table-light"><tr><th>料件</th><th>供應商</th><th class="num">合約單價</th><th style="width:200px">承諾採購量（期間合計）</th></tr></thead>
+                            <tbody>
+                            @foreach (var a in r.Awards)
+                            {
+                                var l = r.Lines.First(x => x.Id == a.RfqLineId);
+                                var ql = MockDb.LatestQuote(r, a.SupplierId)!.Lines.First(x => x.RfqLineId == a.RfqLineId);
+                                <tr>
+                                    <td>@Lbl(l)</td>
+                                    <td>@db.Supplier(a.SupplierId).Name</td>
+                                    <td class="num">@a.UnitPrice.ToString("N2")@if (ql.Tiers.Count > 0) { <div class="small text-primary">@ql.TierText</div> }</td>
+                                    <td><input name="committed[@a.RfqLineId]" type="number" step="any" min="0" value="@((a.Qty * 4).ToString("0.##"))" class="form-control form-control-sm" /></td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                        <button class="btn btn-success btn-sm">建立合約價</button>
+                        <span class="small text-muted ms-2">承諾量預設為本次數量 × 4（例如一季一次、一年四次），可依實際需求調整，填 0 表示無承諾量。</span>
+                    </form>
+                </div>
+            }
+        }
+    </div>
+
+    @* ================= 異動紀錄 ================= *@
+    <div class="tab-pane fade @PaneCls("logs")" id="logs">
+        <table class="table table-sm">
+            <thead class="table-light"><tr><th style="width:160px">時間</th><th style="width:220px">人員</th><th>動作</th></tr></thead>
+            <tbody>
+            @foreach (var log in r.Logs.OrderByDescending(l => l.At))
+            {
+                <tr><td>@log.At.ToString("yyyy/MM/dd HH:mm")</td><td>@log.User</td><td>@log.Action</td></tr>
+            }
+            </tbody>
+        </table>
+        <div class="help">稽核軌跡（Audit Trail）記錄每個動作的人員與時間，是內部稽核、ISO 與上市櫃公司內控的基本要求。</div>
+    </div>
+</div>
+
+@section Scripts {
+<script>
+    // 議價：顯示所選供應商目前報價
+    function showCurPrice() {
+        if (!window.negPrices) return;
+        var prices = window.negPrices[$('#negSupplier').val()] || {};
+        $('.cur-price').each(function () {
+            var p = prices[$(this).data('line')];
+            $(this).text(p === undefined ? '-' : Number(p).toLocaleString(undefined, { minimumFractionDigits: 2 }));
+        });
+    }
+    $('#negSupplier').on('change', showCurPrice);
+    showCurPrice();
+
+    // 階梯價格試算：輸入任意數量，計算各廠商單價與總額
+    $('.sim-qty').on('input', function () {
+        var line = $(this).data('line'), qty = Number(this.value);
+        var data = (window.tierData || {})[line] || {};
+        var $cells = $('.sim-cell[data-line="' + line + '"]');
+        if (!qty) { $cells.text('').removeClass('cell-best'); return; }
+        var prices = {};
+        $cells.each(function () {
+            var d = data[$(this).data('sid')];
+            prices[$(this).data('sid')] = tierPriceAt(d.tiers.map(t => ({ q: t.q, p: t.p })), qty) ?? d.flat;
+        });
+        var min = Math.min.apply(null, Object.values(prices));
+        $cells.each(function () {
+            var p = prices[$(this).data('sid')];
+            $(this).html(p.toLocaleString(undefined, { minimumFractionDigits: 2 }) + ' <span class="small text-muted">/ ' + Math.round(p * qty).toLocaleString() + '</span>')
+                .toggleClass('cell-best', $cells.length > 1 && p === min);
+        });
+    });
+
+    // 決標：即時計算總額
+    function calcAward() {
+        var total = 0;
+        $('.award-radio:checked').each(function () { total += Number($(this).data('amount')); });
+        $('#awardTotal').text(total.toLocaleString(undefined, { maximumFractionDigits: 0 }));
+    }
+    $('.award-radio').on('change', calcAward);
+    $('#pickLowest').on('click', function () { $('.award-radio[data-lowest=1]').prop('checked', true); calcAward(); });
+    $('#pickBest').on('click', function () { $('.award-radio[value=' + $(this).data('sid') + ']').prop('checked', true); calcAward(); });
+    calcAward();
+
+    // 切換分頁時更新網址，重新整理後仍停留在同一頁籤
+    $('a[data-bs-toggle="tab"]').on('shown.bs.tab', function (e) {
+        var url = new URL(location);
+        url.searchParams.set('tab', e.target.getAttribute('href').substring(1));
+        history.replaceState(null, '', url);
+    });
+</script>
+}

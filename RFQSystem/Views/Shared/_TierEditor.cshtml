@@ -1,0 +1,21 @@
+@model TierEditorVm
+@* 階梯報價編輯列：放在報價表單每個項目的下一列；有既有階梯時預設展開 *@
+<tr class="tier-row @(Model.Tiers.Count == 0 ? "d-none" : "")" data-line="@Model.LineId">
+    <td colspan="@Model.Colspan" class="bg-light border-top-0 pt-0">
+        <div class="tier-editor d-flex flex-wrap align-items-center gap-2 small py-1" data-line="@Model.LineId" data-qty="@Model.Qty.ToString("0.##")">
+            <span class="fw-semibold">階梯報價</span>
+            @for (var i = 0; i < QuoteForm.TierSlots; i++)
+            {
+                var t = i < Model.Tiers.Count ? Model.Tiers[i] : null;
+                <span class="tier-slot d-inline-flex align-items-center gap-1 border rounded px-1 bg-white">
+                    <input type="hidden" name="tierLine" value="@Model.LineId" />
+                    <span class="text-muted">≥</span>
+                    <input name="tierQty" type="number" step="any" min="0" value="@t?.MinQty.ToString("0.##")" class="form-control form-control-sm tier-q border-0" style="width:80px" placeholder="數量" />
+                    <span class="text-muted">@Model.Unit</span>
+                    <input name="tierPrice" type="number" step="any" min="0" value="@t?.UnitPrice.ToString("0.##")" class="form-control form-control-sm tier-p border-0" style="width:80px" placeholder="單價" />
+                </span>
+            }
+            <span class="text-muted">本次需求 <strong>@Model.Qty.ToString("N0")</strong> @Model.Unit，單價會自動帶入適用的階梯價<span class="tier-hint"></span></span>
+        </div>
+    </td>
+</tr>

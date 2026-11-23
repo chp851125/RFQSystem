@@ -1,0 +1,33 @@
+@model MockDb
+@{ ViewData["Title"] = "登入"; }
+<div class="row justify-content-center">
+    <div class="col-lg-7">
+        <div class="card p-4">
+            <h4>供應商登入</h4>
+            <div class="help mb-3">
+                Demo 版不需要密碼，直接選一家供應商登入，就能看到這家廠商看到的畫面。實務上每家供應商會有自己的帳號（通常還會加上雙重驗證），
+                而且只有<strong>合格供應商（AVL）</strong>才會開通帳號。
+            </div>
+            <form asp-action="Login" method="post">
+                <table class="table table-sm table-hover align-middle">
+                    <thead class="table-light"><tr><th></th><th>供應商</th><th>分類</th><th class="text-center">待處理</th></tr></thead>
+                    <tbody>
+                    @foreach (var s in Model.Suppliers.Where(s => s.IsQualified))
+                    {
+                        var todo = Model.Rfqs.Count(r => r.Status != RfqStatus.Draft && r.InvitedSupplierIds.Contains(s.Id) && Model.PortalStatus(r, s.Id).NeedAction)
+                                   + Model.PurchaseOrders.Count(p => p.SupplierId == s.Id && p.Status == "已發出");
+                        <tr>
+                            <td><input class="form-check-input" type="radio" name="supplierId" value="@s.Id" id="s@(s.Id)" required /></td>
+                            <td><label for="s@(s.Id)">@s.Code @s.Name</label></td>
+                            <td class="small">@string.Join("、", s.Categories)</td>
+                            <td class="text-center">@if (todo > 0) { <span class="badge bg-danger">@todo</span> }</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+                <button class="btn btn-primary">登入</button>
+            </form>
+            <div class="small text-muted mt-3">建議試用：「宏達電子零件」有一張待報價詢價單；「綠能包裝」有一筆議價待回覆；「全球電子科技」有採購單待確認。</div>
+        </div>
+    </div>
+</div>

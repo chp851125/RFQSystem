@@ -1,0 +1,100 @@
+@model RfqCreateVm
+@{
+    ViewData["Title"] = "新增詢價單";
+    var materials = (List<Material>)ViewBag.Materials;
+}
+<h3>新增詢價單</h3>
+<div class="help mb-3">詢價單說明「要買什麼、買多少、什麼時候要」。<strong>目標價</strong>是採購內部的預算 / 底價，供比價與議價參考，不會提供給供應商。</div>
+
+<form asp-action="Create" method="post">
+    <div asp-validation-summary="All" class="text-danger"></div>
+    <div class="card p-3 mb-3">
+        <div class="row g-3">
+            <div class="col-md-6"><label class="form-label">詢價主旨 *</label><input asp-for="Title" class="form-control" placeholder="例：第二季電子零件詢價" /></div>
+            <div class="col-md-3"><label class="form-label">需求部門</label><input asp-for="Department" class="form-control" placeholder="例：生產管理部" /></div>
+            <div class="col-md-3"><label class="form-label">報價截止日</label><input asp-for="Deadline" type="date" class="form-control" /></div>
+            <div class="col-md-3"><label class="form-label">交貨地點</label><input asp-for="DeliveryPlace" class="form-control" /></div>
+            <div class="col-md-9"><label class="form-label">備註（給供應商的說明）</label><input asp-for="Remark" class="form-control" placeholder="例：需附材質證明、報價含運費" /></div>
+            <div class="col-12">
+                <div class="form-check">
+                    <input asp-for="SealedBid" class="form-check-input" />
+                    <label asp-for="SealedBid" class="form-check-label"><strong>密封報價</strong>（建議）：截止前連採購也看不到報價，需經「開標」並由監標人見證後才解除密封</label>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card p-3 mb-3">
+        <div class="d-flex justify-content-between mb-2">
+            <h6 class="mb-0">詢價項目</h6>
+            <button type="button" class="btn btn-sm btn-outline-primary" id="addLine">＋ 新增項目</button>
+        </div>
+        <table class="table table-sm" id="lines">
+            <thead><tr><th>料件</th><th style="width:130px">數量</th><th style="width:150px">目標單價</th><th style="width:170px">需求日</th><th style="width:60px"></th></tr></thead>
+            <tbody>
+            @for (var i = 0; i < Model.Lines.Count; i++)
+            {
+                <tr>
+                    <td>
+                        <select name="Lines[@i].MaterialId" class="form-select form-select-sm">
+                            <option value="0">-- 請選擇 --</option>
+                            @foreach (var m in materials)
+                            {
+                                <option value="@m.Id" selected="@(m.Id == Model.Lines[i].MaterialId)">@m.PartNo @m.Name（@m.Spec）/ @m.Unit</option>
+                            }
+                        </select>
+                    </td>
+                    <td><input name="Lines[@i].Qty" type="number" step="any" value="@Model.Lines[i].Qty" class="form-control form-control-sm" /></td>
+                    <td><input name="Lines[@i].TargetPrice" type="number" step="any" value="@Model.Lines[i].TargetPrice" class="form-control form-control-sm" /></td>
+                    <td><input name="Lines[@i].RequiredDate" type="date" value="@Model.Lines[i].RequiredDate.ToString("yyyy-MM-dd")" class="form-control form-control-sm" /></td>
+                    <td><button type="button" class="btn btn-sm btn-link text-danger remove">刪除</button></td>
+                </tr>
+            }
+            </tbody>
+        </table>
+        <div id="contractHint" class="alert alert-info small mb-0 d-none"></div>
+    </div>
+    <button class="btn btn-primary">儲存草稿</button>
+    <a asp-action="Index" class="btn btn-link">取消</a>
+</form>
+
+@section Scripts {
+<script>
+    // 新增 / 刪除項目列，並重新編號 name 屬性讓 MVC 能綁定
+    function renumber() {
+        $('#lines tbody tr').each(function (i) {
+            $(this).find('[name]').each(function () {
+                this.name = this.name.replace(/Lines\[\d+\]/, 'Lines[' + i + ']');
+            });
+        });
+    }
+    $('#addLine').on('click', function () {
+        var row = $('#lines tbody tr:first').clone();
+        row.find('select').val('0');
+        row.find('input[type=number]').val('');
+        $('#lines tbody').append(row);
+        renumber();
+    });
+    $('#lines').on('click', '.remove', function () {
+        if ($('#lines tbody tr').length > 1) { $(this).closest('tr').remove(); renumber(); }
+        checkContracts();
+    });
+
+    // 選到有生效中合約價的料件時，提醒可直接依合約下單
+    var contracts = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(ViewBag.Contracts));
+    function checkContracts() {
+        var html = [];
+        $('#lines select').each(function () {
+            var list = contracts[this.value] || [];
+            var name = $(this).find('option:selected').text().split('（')[0];
+            list.forEach(function (c) {
+                html.push('<div><strong>' + name + '</strong> 已有生效中合約 <a href="/Contracts/Details/' + c.id + '">' + c.no + '</a>（' + c.supplier + '，單價 '
+                    + Number(c.price).toLocaleString(undefined, { minimumFractionDigits: 2 }) + '，剩 ' + c.daysLeft + ' 天），可直接依合約下單，不必重新詢價。</div>');
+            });
+        });
+        $('#contractHint').html(html.join('') + (html.length ? '<div class="text-muted mt-1">若是合約即將到期要續約、或想重新比價，仍可繼續建立詢價單。</div>' : '')).toggleClass('d-none', html.length === 0);
+    }
+    $('#lines').on('change', 'select', checkContracts);
+    checkContracts();
+</script>
+}

@@ -1,0 +1,228 @@
+@model Rfq
+@{
+    var db = (MockDb)ViewBag.Db;
+    var me = (Supplier)ViewBag.Me;
+    var r = Model;
+    ViewData["Title"] = r.No;
+    var st = db.PortalStatus(r, me.Id);
+    var myQuotes = r.Quotes.Where(q => q.SupplierId == me.Id).OrderBy(q => q.Round).ToList();
+    var latest = myQuotes.LastOrDefault();
+    var neg = r.Negotiations.FirstOrDefault(n => n.SupplierId == me.Id && !n.Replied);
+    var canQuote = neg == null && r.Status == RfqStatus.Quoting && !db.IsPastDeadline(r);
+    var left = r.Deadline.Date.AddDays(1) - DateTime.Now;
+    var myAwards = r.Awards.Where(a => a.SupplierId == me.Id).ToList();
+    var finished = r.Status is RfqStatus.Awarded or RfqStatus.PoCreated;
+    string Mat(int lineId) { var m = db.Material(r.Lines.First(l => l.Id == lineId).MaterialId); return $"{m.PartNo} {m.Name}"; }
+}
+<a asp-action="Index" class="small">← 詢價邀請列表</a>
+<h3>@r.No　@r.Title <span class="badge bg-@st.Badge fs-6 align-middle">@st.Text</span></h3>
+
+<div class="card p-3 mb-3">
+    <div class="row small g-2">
+        <div class="col-md-3"><span class="text-muted">採購聯絡人：</span>@r.Buyer</div>
+        <div class="col-md-3"><span class="text-muted">交貨地點：</span>@r.DeliveryPlace</div>
+        <div class="col-md-3"><span class="text-muted">幣別：</span>@r.Currency（未稅）</div>
+        <div class="col-md-3">
+            <span class="text-muted">報價截止：</span>@r.Deadline.ToString("yyyy/MM/dd") 23:59
+            @if (r.Status == RfqStatus.Quoting && left.TotalSeconds > 0)
+            {
+                <span class="badge bg-warning text-dark">剩 @((int)left.TotalDays) 天 @left.Hours 小時</span>
+            }
+        </div>
+        @if (!string.IsNullOrEmpty(r.Remark)) { <div class="col-12"><span class="text-muted">採購說明：</span><strong>@r.Remark</strong></div> }
+    </div>
+    <table class="table table-sm mt-3 mb-0">
+        <thead class="table-light"><tr><th>#</th><th>料號</th><th>品名 / 規格</th><th class="num">需求數量</th><th>單位</th><th>需求日</th></tr></thead>
+        <tbody>
+        @foreach (var l in r.Lines)
+        {
+            var m = db.Material(l.MaterialId);
+            <tr><td>@l.Id</td><td>@m.PartNo</td><td>@m.Name <span class="small text-muted">@m.Spec</span></td><td class="num">@l.Qty.ToString("N0")</td><td>@m.Unit</td><td>@l.RequiredDate.ToString("yyyy/MM/dd")</td></tr>
+        }
+        </tbody>
+    </table>
+</div>
+
+@* ===== 議價待回覆 ===== *@
+@if (neg != null && latest != null)
+{
+    <div class="card border-danger p-3 mb-3">
+        <h5 class="text-danger">採購提出議價，請回覆</h5>
+        <div class="mb-2"><span class="text-muted">@neg.CreatedAt.ToString("yyyy/MM/dd HH:mm") 採購說明：</span>@neg.Message</div>
+        <form asp-action="Quote" asp-route-id="@r.Id" method="post">
+            <table class="table table-sm">
+                <thead class="table-light"><tr><th>項目</th><th class="num">數量</th><th class="num">您目前報價</th><th class="num">採購希望價格</th><th style="width:150px">新報價 *</th><th style="width:110px">交期（天）</th><th style="width:110px">MOQ</th></tr></thead>
+                <tbody>
+                @foreach (var ql in latest.Lines)
+                {
+                    var line = r.Lines.First(l => l.Id == ql.RfqLineId);
+                    var counter = neg.CounterPrices.TryGetValue(ql.RfqLineId, out var c) ? c : ql.UnitPrice;
+                    <tr>
+                        <td>@Mat(ql.RfqLineId)</td>
+                        <td class="num">@line.Qty.ToString("N0")</td>
+                        <td class="num">@ql.UnitPrice.ToString("N2")</td>
+                        <td class="num text-primary fw-bold">@counter.ToString("N2")</td>
+                        <td>
+                            <input name="prices[@ql.RfqLineId]" data-line="@ql.RfqLineId" type="number" step="any" min="0.01" required value="@ql.UnitPrice.ToString("0.##")" data-counter="@counter.ToString("0.##")" class="form-control form-control-sm neg-price line-price" />
+                            <button type="button" class="btn btn-link btn-sm p-0 tier-toggle" data-line="@ql.RfqLineId">@(ql.Tiers.Count > 0 ? "階梯報價" : "＋ 階梯報價")</button>
+                        </td>
+                        <td><input name="leads[@ql.RfqLineId]" type="number" value="@ql.LeadTimeDays" class="form-control form-control-sm" /></td>
+                        <td><input name="moqs[@ql.RfqLineId]" type="number" step="any" value="@ql.Moq.ToString("0.##")" class="form-control form-control-sm" /></td>
+                    </tr>
+                    <partial name="_TierEditor" model="@(new TierEditorVm(ql.RfqLineId, line.Qty, db.Material(line.MaterialId).Unit, ql.Tiers, 7))" />
+                }
+                </tbody>
+            </table>
+            <input type="hidden" name="paymentTerms" value="@latest.PaymentTerms" />
+            <div class="mb-2"><label class="form-label small">回覆說明</label><input name="remark" class="form-control" placeholder="例：考量長期合作，同意部分降價" /></div>
+            <button type="button" class="btn btn-outline-primary" id="acceptCounter">接受採購希望價格</button>
+            <button class="btn btn-primary">送出新報價</button>
+        </form>
+    </div>
+}
+
+@* ===== 報價表單（新報價或截止前修改） ===== *@
+@if (canQuote)
+{
+    <div class="card border-primary p-3 mb-3">
+        <h5>@(latest == null ? "填寫報價" : "修改報價")</h5>
+        <div class="help mb-2">報價為<strong>密封報價</strong>：其他廠商看不到您的價格，您也看不到其他廠商的價格。截止前可以修改，以最後一次送出的內容為準。<br />
+            若不同數量有不同價格，可點「＋ 階梯報價」填寫（例：≥1,000 個 33 元、≥5,000 個 31.5 元），系統會依本次需求數量自動套用單價，採購也能試算其他數量的價格。</div>
+        <form asp-action="Quote" asp-route-id="@r.Id" method="post">
+            <table class="table table-sm">
+                <thead class="table-light"><tr><th>項目</th><th class="num">數量</th><th style="width:150px">未稅單價 *</th><th style="width:120px">交期（天）*</th><th style="width:120px">MOQ</th><th class="num">小計</th></tr></thead>
+                <tbody>
+                @foreach (var l in r.Lines)
+                {
+                    var ql = latest?.Lines.FirstOrDefault(x => x.RfqLineId == l.Id);
+                    <tr>
+                        <td>@Mat(l.Id)</td>
+                        <td class="num">@l.Qty.ToString("N0")</td>
+                        <td>
+                            <input name="prices[@l.Id]" data-line="@l.Id" type="number" step="any" min="0.01" required value="@ql?.UnitPrice.ToString("0.##")" data-qty="@l.Qty.ToString("0.##")" class="form-control form-control-sm q-price line-price" />
+                            <button type="button" class="btn btn-link btn-sm p-0 tier-toggle" data-line="@l.Id">@(ql?.Tiers.Count > 0 ? "階梯報價" : "＋ 階梯報價")</button>
+                        </td>
+                        <td><input name="leads[@l.Id]" type="number" min="1" required value="@(ql?.LeadTimeDays ?? 14)" class="form-control form-control-sm" /></td>
+                        <td><input name="moqs[@l.Id]" type="number" step="any" value="@(ql?.Moq.ToString("0.##") ?? "1")" class="form-control form-control-sm" /></td>
+                        <td class="num q-sub"></td>
+                    </tr>
+                    <partial name="_TierEditor" model="@(new TierEditorVm(l.Id, l.Qty, db.Material(l.MaterialId).Unit, ql?.Tiers ?? new(), 6))" />
+                }
+                </tbody>
+                <tfoot><tr><th colspan="5" class="num">報價總額</th><th class="num" id="qTotal"></th></tr></tfoot>
+            </table>
+            <div class="row g-2 mb-2">
+                <div class="col-md-4"><label class="form-label small">付款條件</label><input name="paymentTerms" value="@(latest?.PaymentTerms ?? me.PaymentTerms)" class="form-control form-control-sm" /></div>
+                <div class="col-md-3"><label class="form-label small">報價有效期限</label><input name="validUntil" type="date" value="@((latest?.ValidUntil ?? DateTime.Today.AddDays(30)).ToString("yyyy-MM-dd"))" class="form-control form-control-sm" /></div>
+                <div class="col-md-5"><label class="form-label small">備註</label><input name="remark" value="@latest?.Remark" class="form-control form-control-sm" placeholder="例：報價含運費、模具費另計" /></div>
+            </div>
+            <button class="btn btn-primary">@(latest == null ? "送出報價" : "更新報價")</button>
+        </form>
+        @if (latest == null)
+        {
+            <hr />
+            <form asp-action="Decline" asp-route-id="@r.Id" method="post" class="d-flex gap-2 align-items-center">
+                <span class="small text-muted text-nowrap">無法報價？</span>
+                <input name="reason" class="form-control form-control-sm" placeholder="婉拒原因，例：產能已滿、非本公司供應品項" />
+                <button class="btn btn-sm btn-outline-secondary text-nowrap">婉拒報價</button>
+            </form>
+        }
+    </div>
+}
+else if (r.Status == RfqStatus.Quoting && latest == null && !r.Declines.ContainsKey(me.Id))
+{
+    <div class="alert alert-secondary">已超過報價截止時間，無法再報價。</div>
+}
+
+@if (r.Declines.TryGetValue(me.Id, out var why))
+{
+    <div class="alert alert-secondary">您已婉拒此次報價（原因：@why）。@if (canQuote) { <span>截止前仍可改為報價。</span> }</div>
+}
+
+@* ===== 決標結果 ===== *@
+@if (finished)
+{
+    if (myAwards.Count > 0)
+    {
+        <div class="card border-success p-3 mb-3">
+            <h5 class="text-success">恭喜得標</h5>
+            <table class="table table-sm mb-2">
+                <thead class="table-light"><tr><th>項目</th><th class="num">數量</th><th class="num">決標單價</th><th class="num">金額</th></tr></thead>
+                <tbody>
+                @foreach (var a in myAwards)
+                {
+                    <tr><td>@Mat(a.RfqLineId)</td><td class="num">@a.Qty.ToString("N0")</td><td class="num">@a.UnitPrice.ToString("N2")</td><td class="num">@((a.Qty * a.UnitPrice).ToString("N0"))</td></tr>
+                }
+                </tbody>
+            </table>
+            @if (r.Status == RfqStatus.PoCreated) { <a asp-action="Orders" class="btn btn-sm btn-success">查看採購單並確認接單</a> }
+            else { <div class="small text-muted">採購單開立後會通知您。</div> }
+        </div>
+    }
+    else
+    {
+        <div class="alert alert-secondary">感謝您參與本次報價，本案未獲決標。（依慣例不揭露得標廠商與價格）</div>
+    }
+}
+
+@* ===== 我的報價紀錄 ===== *@
+@if (myQuotes.Count > 0)
+{
+    <div class="card p-3">
+        <h6>我的報價紀錄</h6>
+        <table class="table table-sm mb-0">
+            <thead class="table-light"><tr><th>輪次</th><th>時間</th>
+                @foreach (var l in r.Lines) { <th class="num">@Mat(l.Id)</th> }
+                <th class="num">總額</th><th>付款條件</th><th>說明</th></tr></thead>
+            <tbody>
+            @foreach (var q in myQuotes)
+            {
+                <tr>
+                    <td>@(q.Round == 1 ? "初次報價" : $"第 {q.Round} 輪（議價）")</td>
+                    <td>@q.SubmittedAt.ToString("MM/dd HH:mm")</td>
+                    @foreach (var l in r.Lines)
+                    {
+                        var ql = q.Lines.FirstOrDefault(x => x.RfqLineId == l.Id);
+                        <td class="num">@ql?.UnitPrice.ToString("N2")@if (ql?.Tiers.Count > 0) { <div class="small text-primary">@ql.TierText</div> }</td>
+                    }
+                    <td class="num">@MockDb.QuoteTotal(r, q).ToString("N0")</td>
+                    <td>@q.PaymentTerms</td>
+                    <td class="small">@q.Remark</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}
+
+@section Scripts {
+<script>
+    function calcQuote() {
+        var total = 0;
+        $('.q-price').each(function () {
+            var sub = Number(this.value || 0) * Number($(this).data('qty'));
+            total += sub;
+            $(this).closest('tr').find('.q-sub').text(sub ? sub.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '');
+        });
+        $('#qTotal').text(total.toLocaleString(undefined, { maximumFractionDigits: 0 }));
+    }
+    $('.q-price').on('input', calcQuote);
+    calcQuote();
+    // 接受還價：有階梯價時，整組階梯等比例調整，需求數量那一階剛好等於採購希望價格
+    $('#acceptCounter').on('click', function () {
+        $('.neg-price').each(function () {
+            var counter = Number($(this).data('counter'));
+            var $editor = $(this).closest('form').find('.tier-editor[data-line="' + $(this).data('line') + '"]');
+            var tiers = readTiers($editor);
+            var current = tierPriceAt(tiers, Number($editor.data('qty')));
+            if (current === null) { this.value = counter; return; }
+            var f = counter / current;
+            $editor.find('.tier-p').each(function () {
+                if (this.value) this.value = Math.round(Number(this.value) * f * 100) / 100;
+            });
+            syncTierPrice($editor);
+            this.value = counter;
+        });
+    });
+</script>
+}

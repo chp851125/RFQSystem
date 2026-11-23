@@ -1,0 +1,55 @@
+@model PurchaseOrder
+@{
+    var db = (MockDb)ViewBag.Db;
+    var s = db.Supplier(Model.SupplierId);
+    var r = db.FindRfq(Model.RfqId);
+    var ct = Model.ContractId.HasValue ? db.FindContract(Model.ContractId.Value) : null;
+    ViewData["Title"] = Model.No;
+    var tax = Math.Round(Model.Total * 0.05m);
+    var i = 1;
+}
+<div class="no-print mb-2 d-flex justify-content-between">
+    <a asp-action="Index" class="small">← 採購單列表</a>
+    <button class="btn btn-sm btn-outline-secondary" onclick="window.print()">列印</button>
+</div>
+<div class="card p-4">
+    <div class="d-flex justify-content-between mb-3">
+        <div><h3 class="mb-0">採購單 Purchase Order</h3><div class="text-muted">示範公司股份有限公司</div></div>
+        <div class="text-end">
+            <div class="fs-5 fw-bold">@Model.No</div>
+            <div class="small">開立日期 @Model.CreatedAt.ToString("yyyy/MM/dd")</div>
+            @if (r != null) { <div class="small">來源詢價單 <a asp-controller="Rfq" asp-action="Details" asp-route-id="@r.Id">@r.No</a></div> }
+            @if (ct != null) { <div class="small">依合約下單 <a asp-controller="Contracts" asp-action="Details" asp-route-id="@ct.Id">@ct.No</a>（有效至 @ct.ValidTo.ToString("yyyy/MM/dd")）</div> }
+        </div>
+    </div>
+    <div class="row mb-3 small">
+        <div class="col-md-6"><strong>供應商</strong><br />@s.Code @s.Name<br />聯絡人：@s.Contact　@s.Phone<br />@s.Email</div>
+        <div class="col-md-6"><strong>交易條件</strong><br />付款條件：@Model.PaymentTerms<br />交貨地點：@Model.DeliveryPlace<br />幣別：@(r?.Currency ?? ct?.Currency ?? "TWD")</div>
+    </div>
+    <table class="table table-sm table-bordered">
+        <thead class="table-light"><tr><th>#</th><th>料號</th><th>品名 / 規格</th><th class="num">數量</th><th>單位</th><th class="num">單價</th><th class="num">金額</th><th>交貨日</th></tr></thead>
+        <tbody>
+        @foreach (var l in Model.Lines)
+        {
+            var m = db.Material(l.MaterialId);
+            <tr><td>@(i++)</td><td>@m.PartNo</td><td>@m.Name<div class="small text-muted">@m.Spec</div></td><td class="num">@l.Qty.ToString("N0")</td><td>@m.Unit</td><td class="num">@l.UnitPrice.ToString("N2")</td><td class="num">@((l.Qty * l.UnitPrice).ToString("N0"))</td><td>@l.DeliveryDate.ToString("yyyy/MM/dd")</td></tr>
+        }
+        </tbody>
+        <tfoot>
+            <tr><td colspan="6" class="num">未稅金額</td><td class="num">@Model.Total.ToString("N0")</td><td></td></tr>
+            <tr><td colspan="6" class="num">營業稅 5%</td><td class="num">@tax.ToString("N0")</td><td></td></tr>
+            <tr><th colspan="6" class="num">含稅總額</th><th class="num">@((Model.Total + tax).ToString("N0"))</th><td></td></tr>
+        </tfoot>
+    </table>
+    @if (ct != null)
+    {
+        <div class="small text-muted">本採購單依合約 @ct.No 之約定價格與條件開立，雙方權利義務依該合約辦理。</div>
+    }
+    <div class="row mt-4 small text-center">
+        <div class="col">採購：@(r?.Buyer ?? "王小華")</div>
+        @if (r != null)
+        {
+            foreach (var a in r.Approvals.Where(a => a.Status == "Approved")) { <div class="col">@a.Role：@a.Approver</div> }
+        }
+    </div>
+</div>
